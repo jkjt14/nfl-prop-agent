@@ -2,10 +2,6 @@ name: "FFA: Shiny CSV Fetch"
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/ffa_shiny.yml"
-      - "scripts/ffa_shiny_download.R"
 
 jobs:
   shiny_fetch:
@@ -25,18 +21,10 @@ jobs:
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
 
-      - name: Install R dependencies
-        uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          cache-version: 1
-          extra-packages: >
-            any::chromote,
-            any::fs,
-            any::jsonlite
-
-      - name: Sanity check R env
+      # Install only what the downloader needs. No repo-wide scan.
+      - name: Install R packages (minimal)
         run: |
-          Rscript -e '.libPaths(); sessionInfo()'
+          Rscript -e 'install.packages(c("chromote","fs","jsonlite"), dependencies=TRUE, repos="https://cloud.r-project.org")'
 
       - name: Create artifacts dir
         run: mkdir -p artifacts
@@ -45,7 +33,7 @@ jobs:
         env:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
           FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
-          FFA_DOWNLOAD_TIMEOUT: "90"
+          FFA_DOWNLOAD_TIMEOUT: "120"
           FFA_OUT: artifacts/ffa_raw_stats.csv
         run: Rscript scripts/ffa_shiny_download.R
 
