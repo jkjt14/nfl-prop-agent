@@ -1,9 +1,14 @@
-#!/usr/bin/env Rscript
-# Headless Shiny download via chromote (CDP). Clicks the download button and saves CSV.
+# Auto-install required packages if missing
+needed <- c("chromote", "fs", "jsonlite")
+miss   <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(miss)) {
+  install.packages(miss, repos = "https://cloud.r-project.org")
+}
 
 suppressPackageStartupMessages({
   library(chromote)
   library(fs)
+  library(jsonlite)
 })
 
 shiny_url <- Sys.getenv("FFA_SHINY_URL", "https://ffashiny.shinyapps.io/newApp/")
