@@ -1,0 +1,30 @@
+name: NFL Prop Agent (Scheduled)
+
+on:
+  schedule:
+    # 9:00 AM ET Tuesday–Saturday
+    - cron: '0 13 * * 2-6'
+    # Pre-kickoff runs (Thu 7:30pm, Sun 12:30pm, Mon 7:30pm ET)
+    - cron: '30 23 * * 4'   # Thu (23:30 UTC = 7:30pm ET)
+    - cron: '30 16 * * 0'   # Sun (16:30 UTC = 12:30pm ET)
+    - cron: '30 23 * * 1'   # Mon (23:30 UTC = 7:30pm ET)
+  workflow_dispatch: {}      # Allow manual trigger
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    env:
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/sa.json
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+      ...
