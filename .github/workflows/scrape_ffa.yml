@@ -1,0 +1,66 @@
+name: R / FFA install smoke test
+
+on:
+  workflow_dispatch: {}   # run manually from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  r_smoke_test:
+    runs-on: ubuntu-latest
+
+    # Key fix: give remotes a real token so GitHub API calls don't rate-limit
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.3.3'
+
+      - name: System libs (curl/ssl/xml)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev unzip
+
+      - name: Install CRAN deps
+        run: |
+          Rscript -e 'install.packages(c("remotes","dplyr","readr","stringr","rvest","httr2"), repos="https://cloud.r-project.org")'
+
+      - name: Install ffanalytics from GitHub (token-backed)
+        run: |
+          Rscript -e 'remotes::install_github("FantasyFootballAnalytics/ffanalytics", upgrade="never")'
+          Rscript -e 'cat("ffanalytics version:", as.character(packageVersion("ffanalytics")), "\n")'
+
+      # Optional safety net: if the GitHub install failed for any reason, install from zip
+      - name: Fallback install ffanalytics (no GitHub API)
+        if: failure()
+        run: |
+          set -e
+          curl -fL -o ffanalytics.zip https://github.com/FantasyFootballAnalytics/ffanalytics/archive/refs/heads/main.zip \
+            || curl -fL -o ffanalytics.zip https://github.com/FantasyFootballAnalytics/ffanalytics/archive/refs/heads/master.zip
+          unzip -q ffanalytics.zip
+          # find extracted dir (main or master)
+          DIR=$(ls -d ffanalytics-*/ | head -n1)
+          R CMD INSTALL "$DIR"
+
+      - name: Smoke test script (no Odds API calls)
+        run: |
+          Rscript - <<'RSCRIPT'
+          cat("R version:", R.version.string, "\n")
+          suppressPackageStartupMessages(library(ffanalytics))
+          cat("Loaded ffanalytics:", as.character(packageVersion("ffanalytics")), "\n")
+          df <- data.frame(ok = TRUE, timestamp = as.character(Sys.time()))
+          write.csv(df, "r_smoke_test.csv", row.names = FALSE)
+          RSCRIPT
+
+      - name: Upload smoke test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r-smoke-test
+          path: r_smoke_test.csv
