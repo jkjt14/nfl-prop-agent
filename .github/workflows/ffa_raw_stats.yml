@@ -1,65 +1,81 @@
-- name: Fetch FFA Raw Stats (R)
-  run: Rscript scripts/ffa_fetch.R
-  env:
-    FFA_EMAIL: ${{ secrets.FFA_EMAIL }}
-    FFA_PASSWORD: ${{ secrets.FFA_PASSWORD }}
-    FFA_BASE_URL: ${{ secrets.FFA_BASE_URL }}          # e.g. apps.fantasyfootballanalytics.net
-    FFA_LOGIN_PATH: ${{ secrets.FFA_LOGIN_PATH }}      # optional
-    FFA_RAW_STATS_PATH: ${{ secrets.FFA_RAW_STATS_PATH }}  # optional
-    FFA_LOGIN_URL: ${{ secrets.FFA_LOGIN_URL }}        # optional full URL
-    FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}# optional full URL
-    FFA_COOKIE: ${{ secrets.FFA_COOKIE }}              # optional: bypass login
-    FFA_DEBUG: "1"                                     # turn on while testing
-    FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
+name: FFA Raw Stats Fetch
 
 on:
-  workflow_dispatch: {}   # run manually
-  schedule:
-    - cron: "15 12 * * 4"   # weekly Thu 12:15 UTC (adjust to your preference)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode (start with smoke)"
+        required: true
+        default: "smoke"
+        type: choice
+        options: [smoke, real]
+      debug:
+        description: "Enable debug logs"
+        required: false
+        default: "0"
+        type: choice
+        options: ["0","1"]
 
 permissions:
   contents: read
 
-jobs:
-  fetch_ffa:
-    runs-on: ubuntu-latest
-    env:
-      # For remotes::install_github rate-limits
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      # FFA creds + (optional) paths
-      FFA_EMAIL: ${{ secrets.FFA_EMAIL }}
-      FFA_PASSWORD: ${{ secrets.FFA_PASSWORD }}
-      FFA_BASE_URL: ${{ secrets.FFA_BASE_URL }}
-      FFA_LOGIN_PATH: ${{ secrets.FFA_LOGIN_PATH }}
-      FFA_RAW_STATS_PATH: ${{ secrets.FFA_RAW_STATS_PATH }}
+concurrency:
+  group: ffa-raw-stats-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup R
+      - name: Verify R script exists
+        run: |
+          test -f scripts/ffa_fetch.R || { echo "::error::Missing scripts/ffa_fetch.R"; ls -R; exit 1; }
+
+      - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.3.3'
 
-      - name: System libs (curl/ssl/xml)
+      - name: System libs for httr2/rvest/xml2
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev unzip
+          sudo apt-get install -y libcurl4-openssl-dev libxml2-dev libssl-dev
 
-      - name: Install R deps
+      - name: Install R packages
         run: |
-          Rscript -e 'install.packages(c("remotes","rvest","httr2","readr","dplyr","stringr"), repos="https://cloud.r-project.org")'
+          Rscript -e 'install.packages(c("httr2","rvest","readr","dplyr","stringr"), repos="https://cloud.r-project.org")'
 
-      - name: (Optional) install ffanalytics
+      - name: Smoke test (no secrets, no site)
+        if: ${{ github.event.inputs.mode == 'smoke' }}
         run: |
-          Rscript -e 'remotes::install_github("FantasyFootballAnalytics/ffanalytics", upgrade="never")' || true
+          Rscript scripts/ffa_fetch.R --smoke-test=true --out=artifacts/ffa_smoke.csv
+          echo "== Smoke output =="
+          head -n 5 artifacts/ffa_smoke.csv || true
+          ls -lh artifacts || true
 
-      - name: Fetch FFA Raw Stats
-        run: Rscript scripts/ffa_fetch.R
+      - name: Real fetch (cookie + direct CSV URL)
+        if: ${{ github.event.inputs.mode == 'real' }}
+        env:
+          FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
+          FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}
+          FFA_DEBUG: ${{ github.event.inputs.debug }}
+        run: |
+          mkdir -p artifacts
+          if [ -z "${FFA_COOKIE}" ] || [ -z "${FFA_RAW_STATS_URL}" ]; then
+            echo "::error::Secrets FFA_COOKIE and FFA_RAW_STATS_URL are required for real mode."
+            exit 1
+          fi
+          Rscript scripts/ffa_fetch.R --smoke-test=false --out=artifacts/ffa_raw_stats.csv
+          echo "== Real output preview =="
+          head -n 5 artifacts/ffa_raw_stats.csv || true
+          ls -lh artifacts || true
 
-      - name: Upload artifact
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ffa-raw-stats
-          path: artifacts/ffa_raw_stats.csv
+          name: ffa-output
+          path: artifacts/
