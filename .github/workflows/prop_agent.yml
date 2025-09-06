@@ -1,12 +1,12 @@
 name: NFL Prop Agent (Scheduled)
 
 on:
-  workflow_dispatch: {}         # enables the "Run workflow" button
-  schedule:                     # UTC times
-    - cron: '0 13 * * 2-6'      # 9:00 AM ET Tue–Sat
-    - cron: '30 23 * * 4'       # Thu 7:30 PM ET
-    - cron: '30 16 * * 0'       # Sun 12:30 PM ET
-    - cron: '30 23 * * 1'       # Mon 7:30 PM ET
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 13 * * 2-6'   # 9:00 AM ET Tue–Sat (13:00 UTC)
+    - cron: '30 23 * * 4'    # Thu 7:30 PM ET (23:30 UTC)
+    - cron: '30 16 * * 0'    # Sun 12:30 PM ET (16:30 UTC)
+    - cron: '30 23 * * 1'    # Mon 7:30 PM ET (23:30 UTC)
 
 jobs:
   run-agent:
@@ -30,10 +30,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ✅ Avoid "secrets" in the if:. Use env+shell check instead.
       - name: Materialize Firestore service account (optional)
-        if: ${{ secrets.FIREBASE_SA_JSON != '' }}
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
         run: |
-          echo '${{ secrets.FIREBASE_SA_JSON }}' > sa.json
+          if [ -n "$FIREBASE_SA_JSON" ]; then
+            echo "$FIREBASE_SA_JSON" > sa.json
+            echo "Service account JSON written to sa.json"
+          else
+            echo "No FIREBASE_SA_JSON secret set; skipping Firestore auth file."
+          fi
 
       - name: Run agent
         run: |
@@ -44,3 +51,14 @@ jobs:
         with:
           name: edges_bestbook
           path: edges_bestbook.csv
+
+      # Optional: commit outputs back to repo
+      # - name: Commit CSV back to repo
+      #   run: |
+      #     git config user.name "github-actions[bot]"
+      #     git config user.email "github-actions[bot]@users.noreply.github.com"
+      #     mkdir -p outputs
+      #     cp edges_bestbook.csv outputs/edges_$(date -u +'%Y-%m-%dT%H%MZ').csv
+      #     git add outputs edges_bestbook.csv || true
+      #     git commit -m "Update edges $(date -u +'%Y-%m-%dT%H:%MZ')" || echo "No changes"
+      #     git push || true
