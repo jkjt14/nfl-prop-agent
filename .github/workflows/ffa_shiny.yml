@@ -2,6 +2,10 @@ name: FFA: Shiny CSV Fetch
 
 on:
   workflow_dispatch: {}
+  push:
+    paths:
+      - ".github/workflows/ffa_shiny.yml"
+      - "scripts/ffa_shiny_download.R"
 
 jobs:
   shiny_fetch:
@@ -22,9 +26,7 @@ jobs:
 
       - name: Download CSV from Shiny
         env:
-          # If your app lives elsewhere, change this:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          # This selector comes from the URL you pasted; update if the app changes ids
           FFA_DOWNLOAD_SELECTOR: a#projections_page-proj-download_projections-download
           FFA_DOWNLOAD_TIMEOUT: "90"
           FFA_OUT: artifacts/ffa_raw_stats.csv
