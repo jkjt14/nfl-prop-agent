@@ -5,3 +5,8 @@ scipy
 PyYAML
 streamlit
 firebase-admin
+streamlit>=1.36
+pandas>=2.2
+requests>=2.31
+pyyaml>=6.0.2
+openpyxl>=3.1 
