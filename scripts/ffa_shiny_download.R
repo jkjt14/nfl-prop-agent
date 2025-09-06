@@ -1,9 +1,7 @@
 # Auto-install required packages if missing
 needed <- c("chromote", "fs", "jsonlite")
 miss   <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
-if (length(miss)) {
-  install.packages(miss, repos = "https://cloud.r-project.org")
-}
+if (length(miss)) install.packages(miss, repos = "https://cloud.r-project.org")
 
 suppressPackageStartupMessages({
   library(chromote)
