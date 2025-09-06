@@ -3,10 +3,10 @@ name: NFL Prop Agent (Scheduled)
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: '0 13 * * 2-6'   # 9:00 AM ET Tue–Sat (13:00 UTC)
-    - cron: '30 23 * * 4'    # Thu 7:30 PM ET (23:30 UTC)
-    - cron: '30 16 * * 0'    # Sun 12:30 PM ET (16:30 UTC)
-    - cron: '30 23 * * 1'    # Mon 7:30 PM ET (23:30 UTC)
+    - cron: '0 13 * * 2-6'   # 09:00 ET Tue–Sat (13:00 UTC)
+    - cron: '30 23 * * 4'    # Thu 19:30 ET
+    - cron: '30 16 * * 0'    # Sun 12:30 ET
+    - cron: '30 23 * * 1'    # Mon 19:30 ET
 
 jobs:
   run-agent:
@@ -30,7 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ Avoid "secrets" in the if:. Use env+shell check instead.
       - name: Materialize Firestore service account (optional)
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
@@ -42,23 +41,26 @@ jobs:
             echo "No FIREBASE_SA_JSON secret set; skipping Firestore auth file."
           fi
 
-      - name: Run agent
+      - name: Run agent (base profile)
         run: |
-          python agent_cli.py --projections data/raw_stats_current.csv --out edges_bestbook.csv
+          python agent_cli.py --projections data/raw_stats_current.csv --out edges_bestbook.csv --profile base --days 7 --max-calls 2000
 
-      - name: Upload CSV artifact
+      - name: Upload edges CSV
         uses: actions/upload-artifact@v4
         with:
           name: edges_bestbook
           path: edges_bestbook.csv
 
-      # Optional: commit outputs back to repo
-      # - name: Commit CSV back to repo
+      - name: Upload API call log
+        uses: actions/upload-artifact@v4
+        with:
+          name: odds_api_calls
+          path: odds_api_calls.csv
+          if-no-files-found: ignore
+
+      # Optional Firestore push
+      # - name: Push to Firestore
+      #   if: ${{ env.GOOGLE_CLOUD_PROJECT != '' && hashFiles('sa.json') != '' }}
       #   run: |
-      #     git config user.name "github-actions[bot]"
-      #     git config user.email "github-actions[bot]@users.noreply.github.com"
-      #     mkdir -p outputs
-      #     cp edges_bestbook.csv outputs/edges_$(date -u +'%Y-%m-%dT%H%MZ').csv
-      #     git add outputs edges_bestbook.csv || true
-      #     git commit -m "Update edges $(date -u +'%Y-%m-%dT%H:%MZ')" || echo "No changes"
-      #     git push || true
+      #     PYDATE=$(date -u +'%Y_%m_%d')
+      #     python firestore_push.py --csv edges_bestbook.csv --collection "nfl_props/${PYDATE}/edges"
