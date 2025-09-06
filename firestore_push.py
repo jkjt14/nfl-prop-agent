@@ -1,36 +1,24 @@
+import argparse, csv, os, json
+from google.cloud import firestore
 
-"""
-Optional: push results to Firebase/Firestore.
-Requires:
-  pip install firebase-admin
-  export GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json
-
-Usage:
-  python firestore_push.py --csv edges_bestbook.csv --collection nfl_props/2025_week1/edges
-"""
-import argparse, os, pandas as pd
-import firebase_admin
-from firebase_admin import credentials, firestore
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--csv", required=True)
-    ap.add_argument("--collection", required=True, help="Firestore collection path, e.g., nfl_props/2025_week1/edges")
-    args = ap.parse_args()
-
-    if not firebase_admin._apps:
-        cred = credentials.Certificate(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
-
-    df = pd.read_csv(args.csv)
+def push_csv(path: str, collection: str):
+    db = firestore.Client()
     batch = db.batch()
-    coll = db.collection(args.collection)
-    for i, row in df.iterrows():
-        doc = coll.document()
-        batch.set(doc, row.to_dict())
-    batch.commit()
-    print(f"Pushed {len(df)} rows to {args.collection}")
+    with open(path, newline="", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for i, row in enumerate(r):
+            doc_ref = db.collection(collection).document()
+            batch.set(doc_ref, row)
+            if (i+1) % 400 == 0:
+                batch.commit(); batch = db.batch()
+        batch.commit()
+    print(f"Pushed {i+1} rows to {collection}")
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True)
+    ap.add_argument("--collection", required=True, help='e.g. "nfl_props/2025_wk1/edges"')
+    args = ap.parse_args()
+
+    # Requires GOOGLE_APPLICATION_CREDENTIALS env var to a service-account JSON
+    push_csv(args.csv, args.collection)
