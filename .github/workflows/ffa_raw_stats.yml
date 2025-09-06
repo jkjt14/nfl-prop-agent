@@ -1,4 +1,15 @@
-name: Fetch FFA Raw Stats (R)
+- name: Fetch FFA Raw Stats (R)
+  run: Rscript scripts/ffa_fetch.R
+  env:
+    FFA_EMAIL: ${{ secrets.FFA_EMAIL }}
+    FFA_PASSWORD: ${{ secrets.FFA_PASSWORD }}
+    FFA_BASE_URL: ${{ secrets.FFA_BASE_URL }}          # e.g. apps.fantasyfootballanalytics.net
+    FFA_LOGIN_PATH: ${{ secrets.FFA_LOGIN_PATH }}      # optional
+    FFA_RAW_STATS_PATH: ${{ secrets.FFA_RAW_STATS_PATH }}  # optional
+    FFA_LOGIN_URL: ${{ secrets.FFA_LOGIN_URL }}        # optional full URL
+    FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}# optional full URL
+    FFA_COOKIE: ${{ secrets.FFA_COOKIE }}              # optional: bypass login
+    FFA_DEBUG: "1"                                     # turn on while testing
 
 on:
   workflow_dispatch: {}   # run manually
