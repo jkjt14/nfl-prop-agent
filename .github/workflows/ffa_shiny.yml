@@ -1,7 +1,7 @@
-name: FFA: Shiny CSV Fetch
+name: "FFA: Shiny CSV Fetch"
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   push:
     paths:
       - ".github/workflows/ffa_shiny.yml"
@@ -10,6 +10,8 @@ on:
 jobs:
   shiny_fetch:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,10 +26,13 @@ jobs:
         run: |
           Rscript -e 'install.packages(c("chromote","fs","jsonlite"), repos="https://cloud.r-project.org")'
 
+      - name: Create artifacts dir
+        run: mkdir -p artifacts
+
       - name: Download CSV from Shiny
         env:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          FFA_DOWNLOAD_SELECTOR: a#projections_page-proj-download_projections-download
+          FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
           FFA_DOWNLOAD_TIMEOUT: "90"
           FFA_OUT: artifacts/ffa_raw_stats.csv
         run: Rscript scripts/ffa_shiny_download.R
