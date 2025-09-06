@@ -1,0 +1,53 @@
+name: Fetch FFA Raw Stats (R)
+
+on:
+  workflow_dispatch: {}   # run manually
+  schedule:
+    - cron: "15 12 * * 4"   # weekly Thu 12:15 UTC (adjust to your preference)
+
+permissions:
+  contents: read
+
+jobs:
+  fetch_ffa:
+    runs-on: ubuntu-latest
+    env:
+      # For remotes::install_github rate-limits
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # FFA creds + (optional) paths
+      FFA_EMAIL: ${{ secrets.FFA_EMAIL }}
+      FFA_PASSWORD: ${{ secrets.FFA_PASSWORD }}
+      FFA_BASE_URL: ${{ secrets.FFA_BASE_URL }}
+      FFA_LOGIN_PATH: ${{ secrets.FFA_LOGIN_PATH }}
+      FFA_RAW_STATS_PATH: ${{ secrets.FFA_RAW_STATS_PATH }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.3.3'
+
+      - name: System libs (curl/ssl/xml)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev unzip
+
+      - name: Install R deps
+        run: |
+          Rscript -e 'install.packages(c("remotes","rvest","httr2","readr","dplyr","stringr"), repos="https://cloud.r-project.org")'
+
+      - name: (Optional) install ffanalytics
+        run: |
+          Rscript -e 'remotes::install_github("FantasyFootballAnalytics/ffanalytics", upgrade="never")' || true
+
+      - name: Fetch FFA Raw Stats
+        run: Rscript scripts/ffa_fetch.R
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffa-raw-stats
+          path: artifacts/ffa_raw_stats.csv
