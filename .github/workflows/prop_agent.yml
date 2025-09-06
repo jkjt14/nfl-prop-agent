@@ -1,6 +1,7 @@
 name: NFL Prop Agent (Scheduled)
 
 on:
+  workflow_dispatch: {}   # ← this line MUST exist for the button
   schedule:
     # 9:00 AM ET Tuesday–Saturday
     - cron: '0 13 * * 2-6'
