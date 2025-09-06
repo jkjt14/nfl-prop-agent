@@ -10,6 +10,7 @@
     FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}# optional full URL
     FFA_COOKIE: ${{ secrets.FFA_COOKIE }}              # optional: bypass login
     FFA_DEBUG: "1"                                     # turn on while testing
+    FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
 
 on:
   workflow_dispatch: {}   # run manually
