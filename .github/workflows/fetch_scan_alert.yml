@@ -1,0 +1,136 @@
+name: FFA: fetch projections ➜ scan ➜ alert
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_fetch:
+        description: "Fetch projections with R first?"
+        type: boolean
+        default: true
+      days_from:
+        description: "Scan days ahead"
+        type: number
+        default: 7
+      profile:
+        description: "Market profile (base/heavy)"
+        type: choice
+        options: [base, heavy]
+        default: base
+      alert_threshold:
+        description: "Slack alert EV threshold (e.g. 0.06 = 6%)"
+        type: string
+        default: "0.06"
+
+concurrency:
+  group: prop-agent
+  cancel-in-progress: true
+
+jobs:
+  fetch_projections:
+    if: ${{ inputs.run_fetch }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - name: Setup Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      # System libs needed for chromote/curl & headless Chrome
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libnss3 libgbm1 fonts-liberation
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
+
+      - name: Install R packages (minimal)
+        run: |
+          Rscript -e 'install.packages(c("chromote","fs","jsonlite","httr2","rvest","readr","dplyr","stringr"), repos="https://cloud.r-project.org", dependencies=TRUE)'
+
+      - name: Create artifacts dir
+        run: mkdir -p artifacts
+
+      - name: Download CSV from Shiny (or raw if cookie+url set)
+        env:
+          # Shiny route (default)
+          FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
+          FFA_DOWNLOAD_TIMEOUT: "120"
+          FFA_OUT: artifacts/projections.csv
+          CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          # Optional direct-download route (skips Shiny if both present)
+          FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
+          FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}
+        run: Rscript scripts/ffa_shiny_download.R
+
+      - name: Upload projections artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: projections
+          path: artifacts/projections.csv
+
+  scan_and_alert:
+    runs-on: ubuntu-latest
+    needs: [fetch_projections]
+    if: always()  # still runs even if fetch was skipped or failed; will fall back to repo CSV
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download projections artifact (if produced)
+        uses: actions/download-artifact@v4
+        with:
+          name: projections
+          path: projections
+        continue-on-error: true
+
+      - name: Choose projections file (artifact vs repo fallback)
+        run: |
+          if [ -f projections/projections.csv ]; then
+            echo "PROJECTIONS_CSV=projections/projections.csv" >> $GITHUB_ENV
+          else
+            echo "PROJECTIONS_CSV=data/projections.csv" >> $GITHUB_ENV
+          fi
+          echo "Using PROJECTIONS_CSV=$PROJECTIONS_CSV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip
+          pip install pandas numpy requests scipy pyyaml
+
+      - name: Run agent (scan + Slack alerts)
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ENABLE_ALERTS: "1"
+          ALERT_MIN_EV: ${{ inputs.alert_threshold }}
+          PROJECTIONS_CSV: ${{ env.PROJECTIONS_CSV }}
+          EDGES_OUT: artifacts/edges_bestbook.csv
+          EDGES_JSON_OUT: artifacts/edges_bestbook.json
+        run: |
+          mkdir -p artifacts
+          python agent_cli.py \
+            --config agent_config.yaml \
+            --profile "${{ inputs.profile }}" \
+            --days-from "${{ inputs.days_from }}"
+
+      - name: Upload edges artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edges
+          path: artifacts/*
