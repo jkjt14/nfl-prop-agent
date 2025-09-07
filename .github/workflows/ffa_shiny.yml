@@ -1,7 +1,7 @@
-name: FFA: Shiny CSV Fetch
+name: FFA Shiny CSV Fetch
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 jobs:
   shiny_fetch:
@@ -21,13 +21,12 @@ jobs:
       - name: Setup Chrome
         uses: browser-actions/setup-chrome@v1
 
-      # Needed so R package 'curl' (dependency of httr2/chromote) can compile
-      - name: Install system libs for curl
+      - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev
+          sudo apt-get install -y libcurl4-openssl-dev libasound2t64
 
-      - name: Install minimal R packages
+      - name: Install R packages
         run: |
           Rscript -e 'install.packages(c("chromote","httr2","jsonlite","fs"), repos="https://cloud.r-project.org")'
 
