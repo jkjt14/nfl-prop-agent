@@ -1,157 +1,132 @@
 #!/usr/bin/env python3
-import os, sys, json, argparse, math
+import os, sys, json, logging
 import pandas as pd
-import yaml
 
 from agent_core import scan_edges
-from alerts import alert_edges
 
-# ---------- helpers ----------
+# Optional alerts; keep it lightweight (simple webhook)
+def post_slack_blocks(webhook: str, blocks: list) -> None:
+    import requests
+    try:
+        r = requests.post(webhook, json={"blocks": blocks}, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        logging.warning(f"Slack post failed: {e}")
 
-def fmt_american(odds: int) -> str:
-    return f"{odds:+d}"
+def alert_edges(df: pd.DataFrame, webhook: str, threshold_ev: float = 0.06, batch: int = 10) -> int:
+    if df.empty:
+        return 0
+    want = df[df["ev"] >= threshold_ev].copy()
+    if want.empty:
+        return 0
 
-HUMAN_MARKET = {
-    "player_pass_yds": "passing yards",
-    "player_pass_tds": "pass TDs",
-    "player_pass_attempts": "pass attempts",
-    "player_pass_completions": "completions",
-    "player_interceptions": "interceptions",
-
-    "player_rush_yds": "rushing yards",
-    "player_rush_tds": "rush TDs",
-    "player_longest_rush": "longest rush",
-
-    "player_receptions": "receptions",
-    "player_receiving_yds": "receiving yards",
-    "player_reception_tds": "receiving TDs",
-    "player_longest_reception": "longest reception",
-}
-
-def market_readable(key: str) -> str:
-    return HUMAN_MARKET.get(key, key.replace("_", " "))
+    # Build Slack blocks
+    blocks = []
+    blocks.append({"type": "header", "text": {"type": "plain_text", "text": f"Edges ≥ {threshold_ev*100:.0f}% EV"}})
+    for _, s in want.head(batch).iterrows():
+        line = f"{s['player']} {s['side']} {s['line']:.1f} {s['market_readable']}"
+        odds = f"{int(s['price']):+d}"
+        sub = f"{s['book']} {odds} • EV {s['ev']*100:.1f}% • stake {float(s['stake_u']):.1f}u"
+        blocks.extend([
+            {"type":"section","text":{"type":"mrkdwn","text":f"*{line}*"}},
+            {"type":"context","elements":[{"type":"mrkdwn","text":sub}]},
+            {"type":"divider"}
+        ])
+    post_slack_blocks(webhook, blocks)
+    return len(want)
 
 def load_cfg(path: str) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-def load_projections(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Projections CSV not found: {path}")
-    df = pd.read_csv(path)
-    # normalize common column names
-    rename_map = {
-        "position": "pos",
-        "team_id": "team",
-        "name": "player",
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    # Minimal defaults if no config.json present
+    return {
+        "regions": "us",
+        "target_books": [],  # empty = allow all
+        "blend_alpha": 0.35,
+        "markets": {
+            "base": [
+                "player_pass_yds","player_rush_yds","player_reception_yds","player_receptions"
+            ]
+        },
+        "bankroll": 1000.0,
+        "unit_pct": 0.01,
+        "stake_bands": [
+            {"min_ev": 0.08, "stake_u": 1.0},
+            {"min_ev": 0.04, "stake_u": 0.5},
+            {"min_ev": 0.02, "stake_u": 0.3},
+        ],
+        "sigma_defaults": {
+            "QB": {"player_pass_yds": 45.0},
+            "WR": {"player_reception_yds": 30.0, "player_receptions": 2.0},
+            "RB": {"player_rush_yds": 20.0},
+            "TE": {"player_reception_yds": 25.0, "player_receptions": 1.8}
+        }
     }
-    for a, b in rename_map.items():
-        if a in df.columns and b not in df.columns:
-            df[b] = df[a]
-    # ensure required cols
-    for c in ("player", "team", "pos"):
-        if c not in df.columns:
-            df[c] = ""
-    return df
 
-def advice_line(row) -> str:
-    ev_pct = row["ev_per_unit"] * 100.0
-    win_pct = row["win_prob"] * 100.0
-    mk = market_readable(row["market_key"])
-    odds_str = fmt_american(int(row["book_odds"]))
-    line_str = f"{row['book_line']:.1f}".rstrip("0").rstrip(".")  # 268.5 -> "268.5", 0.0 -> "0"
-    stake_u = row.get("stake_u", 0.0)
-    stake_d = row.get("stake_$", 0.0)
-    team = (row.get("team") or "").upper()
-    pos = (row.get("pos") or "").upper()
-    meta = " ".join(x for x in [team, pos] if x)
-    meta = f" ({meta})" if meta else ""
-    return (
-        f"{row['player']}{meta} — {row['side']} {line_str} {mk} "
-        f"@ {row['best_book']} {odds_str}  "
-        f"(EV {ev_pct:+.1f}%, win {win_pct:.1f}%, stake {stake_u:g}u = ${stake_d:.2f})"
-    )
+def main() -> int:
+    logging.basicConfig(level=os.environ.get("LOGLEVEL","INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
-def print_advice(df: pd.DataFrame, threshold_ev: float, top_n: int = 40) -> None:
-    if df.empty:
-        print("\nNo edges found.\n")
-        return
-    eligible = df[df["ev_per_unit"] >= threshold_ev].copy()
-    if eligible.empty:
-        print(f"\nNo edges ≥ {threshold_ev*100:.1f}% EV.\n")
-        return
-    eligible = eligible.sort_values(["ev_per_unit", "win_prob"], ascending=[False, False])
-    print("\n=== Advice (edges meeting threshold) ===\n")
-    for _, r in eligible.head(top_n).iterrows():
-        print("• " + advice_line(r))
-    print("")
-
-# ---------- CLI ----------
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="NFL prop agent: scan markets and print advice (+optional Slack alerts)."
-    )
-    parser.add_argument("--config", default=os.environ.get("AGENT_CONFIG", "agent_config.yaml"),
-                        help="Path to YAML config (default: agent_config.yaml)")
-    parser.add_argument("--profile", default=os.environ.get("PROFILE", "base"),
-                        help="Markets profile key in config (default: base)")
-    parser.add_argument("--days-from", default=os.environ.get("DAYS_FROM", "7"),
-                        help="Days ahead to scan (default: 7)")
-    parser.add_argument("--projections", default=os.environ.get("PROJECTIONS_CSV", "data/projections.csv"),
-                        help="Path to projections CSV (default: data/projections.csv)")
-    parser.add_argument("--edges-out", default=os.environ.get("EDGES_OUT", "artifacts/edges_bestbook.csv"),
-                        help="CSV output path (default: artifacts/edges_bestbook.csv)")
-    parser.add_argument("--edges-json-out", default=os.environ.get("EDGES_JSON_OUT", "artifacts/edges_bestbook.json"),
-                        help="JSON output path for edges (default: artifacts/edges_bestbook.json)")
-    parser.add_argument("--threshold", type=float,
-                        default=float(os.environ.get("ALERT_MIN_EV", "0.06")),
-                        help="EV threshold for advice/alerts, e.g. 0.06 for 6%% (default: 0.06)")
-    parser.add_argument("--no-alerts", action="store_true",
-                        help="Disable Slack alerts even if SLACK_WEBHOOK_URL is set / ENABLE_ALERTS=1")
-    args = parser.parse_args()
-
-    cfg = load_cfg(args.config)
-
-    # Required: ODDS_API_KEY
-    api_key = os.environ.get("ODDS_API_KEY", "")
+    api_key = os.environ.get("ODDS_API_KEY","").strip()
     if not api_key:
-        print("ERROR: ODDS_API_KEY env var is required.", file=sys.stderr)
-        sys.exit(2)
+        logging.error("Missing ODDS_API_KEY env.")
+        return 2
 
-    # Load projections
-    proj_path = args.projections
-    df_proj = load_projections(proj_path)
-    print(f"Loaded projections: {len(df_proj):,} rows, {len(df_proj.columns)} cols from {proj_path}")
+    # projections
+    proj_path = os.environ.get("PROJECTIONS_PATH", "data/projections.csv")
+    if not os.path.exists(proj_path):
+        # fallbacks people often use
+        for alt in ["data/raw_stats_current.csv", "artifacts/projections.csv"]:
+            if os.path.exists(alt):
+                proj_path = alt
+                break
+    if not os.path.exists(proj_path):
+        logging.error(f"Projections file not found: {proj_path}")
+        return 2
+
+    df_proj = pd.read_csv(proj_path)
+    logging.info(f"Loaded projections: {len(df_proj):,} rows, {len(df_proj.columns)} cols from {proj_path}")
+
+    cfg_path = os.environ.get("AGENT_CFG", "config.json")
+    cfg = load_cfg(cfg_path)
+    profile = os.environ.get("MARKETS_PROFILE","base")
+    days_from = int(os.environ.get("DAYS_FROM","7"))
+    max_calls = int(os.environ.get("MAX_CALLS","1000"))
 
     # Scan
     df_edges = scan_edges(
         projections=df_proj,
         cfg=cfg,
         api_key=api_key,
-        days_from=int(str(args.days_from)),
-        profile=args.profile,
-        max_calls=int(cfg.get("max_calls", 2000)),
+        days_from=days_from,
+        profile=profile,
+        max_calls=max_calls,
     )
 
-    # Save outputs
-    os.makedirs(os.path.dirname(args.edges_out), exist_ok=True)
-    df_edges.to_csv(args.edges_out, index=False)
-    with open(args.edges_json_out, "w", encoding="utf-8") as f:
-        json.dump(df_edges.to_dict(orient="records"), f, indent=2)
-    print(f"Saved edges to {args.edges_out} and {args.edges_json_out}")
+    # Outputs
+    os.makedirs("artifacts", exist_ok=True)
+    if df_edges.empty:
+        logging.info("No offers were found across selected markets/books.")
+        with open("artifacts/advice.txt","w",encoding="utf-8") as f:
+            f.write("No edges found.\n")
+        return 0
 
-    # Print clean advice
-    print_advice(df_edges, threshold_ev=args.threshold)
+    df_edges.to_csv("artifacts/edges.csv", index=False)
+    logging.info(f"Computed {len(df_edges):,} edges. Top 10 advice lines:")
+    top = df_edges.head(10)
+    advice_lines = [f"- {s}" for s in top["advice"].tolist()]
+    print("\n".join(advice_lines))
+    with open("artifacts/advice.txt","w",encoding="utf-8") as f:
+        f.write("\n".join(advice_lines) + "\n")
 
-    # Optional Slack alerts
-    enable_alerts = (os.environ.get("ENABLE_ALERTS", "0") == "1") and (not args.no_alerts)
-    webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
-    if enable_alerts and webhook:
-        try:
-            alert_edges(df_edges, threshold_ev=args.threshold)
-        except Exception as e:
-            print(f"Slack alert error: {e}", file=sys.stderr)
+    # Slack alerts
+    threshold = float(os.environ.get("EDGE_THRESHOLD","0.06"))
+    webhook = os.environ.get("SLACK_WEBHOOK","").strip()
+    if webhook:
+        n = alert_edges(df_edges, webhook=webhook, threshold_ev=threshold)
+        logging.info(f"Slack alert edges ≥ {threshold:.3f}: {n}")
+    else:
+        logging.info("SLACK_WEBHOOK not set; skipping Slack alerts.")
 
     return 0
 
