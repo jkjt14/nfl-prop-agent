@@ -6,15 +6,15 @@ on:
       fetch:
         description: "Fetch projections via Shiny first? (true/false)"
         required: true
-        default: "true"
+        default: "false"
       threshold_ev:
         description: "EV threshold like 0.06"
         required: false
-        default: "0.06"
+        default: "0.03"
       profile:
         description: "Markets profile (base/heavy)"
         required: false
-        default: "base"
+        default: "heavy"
 
 jobs:
   fetch_projections:
@@ -63,7 +63,9 @@ jobs:
   scan_and_alert:
     needs: fetch_projections
     runs-on: ubuntu-latest
-    if: ${{ always() }}  # run whether fetch ran or not
+    if: ${{ always() }}
+    env:
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -104,6 +106,13 @@ jobs:
           python -m pip install -U pip
           python -m pip install pandas numpy requests
 
+      - name: Slack ping (sanity check)
+        if: ${{ env.SLACK_WEBHOOK != '' }}
+        run: |
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data '{"text":"Slack webhook OK: starting scan_and_alert"}' \
+            "$SLACK_WEBHOOK" || true
+
       - name: Run scan + alert
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
@@ -112,12 +121,16 @@ jobs:
           MARKETS_PROFILE: ${{ inputs.profile }}
           PROJECTIONS_PATH: data/projections.csv
           NO_TEAM_FILTER: "1"
+          REGIONS: "us,us2"
         run: python agent_cli.py
 
-      - name: Upload edges artifact(s)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: edges
           path: |
             artifacts/edges.csv
             artifacts/advice.txt
+            artifacts/scan_summary.txt
+            artifacts/scan_debug.json
+            artifacts/slack_failed.txt
