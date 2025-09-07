@@ -14,34 +14,31 @@ SHINY_URL    <- Sys.getenv("FFA_SHINY_URL", "")
 OUT_FILE     <- Sys.getenv("FFA_OUT", "artifacts/ffa_raw_stats.csv")
 TIMEOUT_SECS <- as.numeric(Sys.getenv("FFA_DOWNLOAD_TIMEOUT", "180"))
 SEL          <- Sys.getenv("FFA_DOWNLOAD_SELECTOR", "")         # optional exact CSS selector
-MATCH_TXT    <- tolower(Sys.getenv("FFA_DOWNLOAD_MATCH", ""))   # optional free-text bias
+MATCH_TXT    <- tolower(Sys.getenv("FFA_DOWNLOAD_MATCH", ""))   # optional text bias for auto-pick
 
 if (SHINY_URL == "") stop("Set FFA_SHINY_URL")
-
 dir_create(path_dir(OUT_FILE))
 
-# ---------------- Chrome bootstrap (explicit path & args) ----------------
+# ---- Tell chromote which Chrome to use (no `browser=` arg anywhere) ----
 chrome_path <- Sys.getenv("CHROMOTE_CHROME", "")
 chrome_args <- strsplit(Sys.getenv("CHROMOTE_CHROME_ARGS", ""), "\\s+")[[1]]
 chrome_args <- chrome_args[chrome_args != ""]
 
 if (chrome_path == "") {
-  # setup-chrome didn’t pass a path; hope it’s on PATH
+  # best effort if the setup-chrome output wasn't passed
   chrome_path <- Sys.which("chrome")
   if (!nzchar(chrome_path)) chrome_path <- Sys.which("google-chrome")
   if (!nzchar(chrome_path)) chrome_path <- Sys.which("chromium")
 }
-if (!nzchar(chrome_path)) {
-  stop("Could not locate Chrome/Chromium. Set CHROMOTE_CHROME to an absolute path.")
-}
+if (!nzchar(chrome_path)) stop("Could not locate Chrome. Set CHROMOTE_CHROME to an absolute path.")
+
+options(chromote.chrome = chrome_path)
+if (length(chrome_args)) options(chromote.args = chrome_args)
 
 log("Using Chrome: %s", chrome_path)
 if (length(chrome_args)) log("Chrome args: %s", paste(chrome_args, collapse = " "))
 
-# Launch Chrome with chromote’s Chrome process manager
-browser <- Chrome$new(path = chrome_path, args = chrome_args)
-
-# ---------------- Helpers ----------------
+# ---- helpers ----
 sleep_until <- function(timeout, every = 0.5, fn_check) {
   t0 <- Sys.time()
   repeat {
@@ -51,18 +48,14 @@ sleep_until <- function(timeout, every = 0.5, fn_check) {
   }
 }
 
-extract_anchors <- function(c) {
+extract_anchors <- function(sess) {
   js <- "
 (() => {
   const as = Array.from(document.querySelectorAll('a'));
-  return as.map(a => ({
-    id: a.id || '',
-    text: (a.textContent || '').trim(),
-    href: a.href || ''
-  }));
+  return as.map(a => ({ id:a.id||'', text:(a.textContent||'').trim(), href:a.href||'' }));
 })()
 "
-  res <- c$Runtime$evaluate(list(expression = js, returnByValue = TRUE))
+  res <- sess$Runtime$evaluate(list(expression = js, returnByValue = TRUE))
   out <- res$result$value
   if (is.null(out) || !length(out)) {
     return(data.frame(id=character(), text=character(), href=character()))
@@ -77,7 +70,7 @@ extract_anchors <- function(c) {
   })))
 }
 
-href_from_selector <- function(c, selector) {
+href_from_selector <- function(sess, selector) {
   js_get <- sprintf("
 (() => {
   const el = document.querySelector(%s);
@@ -86,7 +79,7 @@ href_from_selector <- function(c, selector) {
   return { ok:true, reason:'have_el', href: href };
 })()
 ", jsonlite::toJSON(selector, auto_unbox = TRUE))
-  got <- c$Runtime$evaluate(list(expression = js_get, returnByValue = TRUE))$result$value
+  got <- sess$Runtime$evaluate(list(expression = js_get, returnByValue = TRUE))$result$value
   if (!isTRUE(got$ok)) return(list(href = "", reason = "not_found"))
   if (nzchar(got$href) && grepl("/download/", got$href)) return(list(href = got$href, reason = "href_ready"))
 
@@ -98,10 +91,10 @@ href_from_selector <- function(c, selector) {
   return true;
 })()
 ", jsonlite::toJSON(selector, auto_unbox = TRUE))
-  invisible(c$Runtime$evaluate(list(expression = js_click, returnByValue = TRUE)))
+  invisible(sess$Runtime$evaluate(list(expression = js_click, returnByValue = TRUE)))
   Sys.sleep(2)
 
-  got2 <- c$Runtime$evaluate(list(expression = js_get, returnByValue = TRUE))$result$value
+  got2 <- sess$Runtime$evaluate(list(expression = js_get, returnByValue = TRUE))$result$value
   list(href = got2$href %||% "", reason = "after_click")
 }
 
@@ -123,7 +116,7 @@ pick_best_candidate <- function(df, match_txt = "") {
 download_to <- function(url, out) {
   log("Fetching CSV via HTTP: %s", url)
   resp <- request(url) |>
-    req_user_agent("ffa-shiny-fetch/1.1 (+chromote+httr2)") |>
+    req_user_agent("ffa-shiny-fetch/1.2 (+chromote+httr2)") |>
     req_timeout(TIMEOUT_SECS) |>
     req_perform()
   if (resp_status(resp) >= 400) stop(sprintf("HTTP %s while downloading CSV.", resp_status(resp)))
@@ -131,32 +124,27 @@ download_to <- function(url, out) {
   log("Saved: %s (%s bytes)", out, format(file_info(out)$size, big.mark = ","))
 }
 
-# ---------------- Main ----------------
+# ---- main ----
 log("Opening Shiny app: %s", SHINY_URL)
-c <- ChromoteSession$new(browser = browser)
-on.exit(try(c$close(), silent = TRUE), add = TRUE)
+sess <- ChromoteSession$new()
+on.exit(try(sess$close(), silent = TRUE), add = TRUE)
 
-c$Page$navigate(SHINY_URL)
-c$Page$loadEventFired(wait_ = TRUE)
+sess$Page$navigate(SHINY_URL)
+sess$Page$loadEventFired(wait_ = TRUE)
+sleep_until(6, 0.5, function() TRUE)  # let widgets initialize
 
-# Give the app some time to wire up widgets
-sleep_until(6, 0.5, function() TRUE)
-
-# A) exact selector path
 if (nzchar(SEL)) {
   log("Trying exact selector: %s", SEL)
-  h <- href_from_selector(c, SEL)
+  h <- href_from_selector(sess, SEL)
   if (nzchar(h$href) && grepl("/download/", h$href)) {
-    download_to(h$href, OUT_FILE)
-    quit(save = "no", status = 0)
+    download_to(h$href, OUT_FILE); quit(save = "no", status = 0)
   } else {
     log("Selector fallback (reason: %s). Auto-discovering link…", h$reason %||% "n/a")
   }
 }
 
-# B) auto-discover any /download/ link
 ok <- sleep_until(TIMEOUT_SECS, 1.0, function() {
-  anchors <- extract_anchors(c)
+  anchors <- extract_anchors(sess)
   cand <- pick_best_candidate(anchors, MATCH_TXT)
   if (!is.null(cand)) {
     download_to(cand$href[[1]], OUT_FILE)
@@ -166,7 +154,7 @@ ok <- sleep_until(TIMEOUT_SECS, 1.0, function() {
 })
 
 if (!ok) {
-  anchors <- extract_anchors(c)
+  anchors <- extract_anchors(sess)
   log("Auto-discovery failed. Anchors seen (top 25):")
   print(utils::head(anchors, 25))
   stop("Could not find a working download link. Set FFA_DOWNLOAD_SELECTOR or tweak FFA_DOWNLOAD_MATCH.")
