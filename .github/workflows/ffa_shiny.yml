@@ -1,4 +1,4 @@
-name: "FFA: Shiny CSV Fetch"
+name: FFA: Shiny CSV Fetch
 
 on:
   workflow_dispatch: {}
@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -20,43 +19,27 @@ jobs:
           use-public-rspm: true
 
       - name: Setup Chrome
-        id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      # System libs for curl (chromote dep) + common headless Chrome deps
-      - name: Install system dependencies
-        shell: bash
+      # Needed so R package 'curl' (dependency of httr2/chromote) can compile
+      - name: Install system libs for curl
         run: |
-          set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y \
-            libcurl4-openssl-dev \
-            libnss3 libgbm1 libxss1 libatk-bridge2.0-0 libgtk-3-0 \
-            fonts-liberation xdg-utils
-          # audio lib name differs across Ubuntu releases
-          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
+          sudo apt-get install -y libcurl4-openssl-dev
 
-      - name: Install R packages (minimal)
+      - name: Install minimal R packages
         run: |
-          Rscript -e 'install.packages(c("chromote","fs","jsonlite"), repos="https://cloud.r-project.org")'
+          Rscript -e 'install.packages(c("chromote","httr2","jsonlite","fs"), repos="https://cloud.r-project.org")'
 
       - name: Create artifacts dir
         run: mkdir -p artifacts
 
       - name: Download CSV from Shiny
         env:
-          # Base app URL (no session tokens)
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          # Optional: click a tab/link by its visible text before searching for the download button
-          FFA_PRECLICK_TEXT: Projections
-          # Leave blank to auto-discover; if needed later set a CSS selector, e.g. a#projections_page-proj-download_projections-download
-          FFA_DOWNLOAD_SELECTOR: ""
-          # Seconds to wait for render + download (bump if needed)
+          FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
           FFA_DOWNLOAD_TIMEOUT: "150"
-          # Output file path
           FFA_OUT: artifacts/ffa_raw_stats.csv
-          # Use the Chrome from setup-chrome
-          CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: Rscript scripts/ffa_shiny_download.R
 
       - name: Upload artifact
