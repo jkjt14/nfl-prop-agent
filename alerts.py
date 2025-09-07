@@ -5,6 +5,7 @@ SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK_URL", "")
 
 def post_slack(text, blocks=None):
     if not SLACK_WEBHOOK:
+        # Quiet no-op if webhook not configured
         return False
     payload = {"text": text}
     if blocks:
@@ -14,9 +15,19 @@ def post_slack(text, blocks=None):
     return True
 
 def alert_edges(df, threshold_ev=0.06):
+    """Send Slack messages for rows where df['ev'] >= threshold_ev.
+    Expects columns: player, side, line, market_readable, book, price, ev, stake_u
+    """
+    # Make sure required columns exist
+    required = {"player","side","line","market_readable","book","price","ev","stake_u"}
+    missing = required - set(map(str, df.columns))
+    if missing:
+        raise ValueError(f"alert_edges: df is missing columns: {sorted(missing)}")
+
     hits = df[df["ev"] >= threshold_ev].copy()
     if hits.empty:
         return 0
+
     hits = hits.sort_values("ev", ascending=False).head(12)
     blocks = []
     for _, r in hits.iterrows():
@@ -27,5 +38,6 @@ def alert_edges(df, threshold_ev=0.06):
         )
         blocks += [{"type": "section", "text": {"type": "mrkdwn", "text": advice}},
                    {"type": "divider"}]
+
     post_slack(f"{len(hits)} edges ≥ {threshold_ev*100:.0f}% EV", blocks)
     return len(hits)
