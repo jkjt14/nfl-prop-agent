@@ -1,5 +1,5 @@
 # agent_cli.py
-import os, sys, json
+import os, sys
 import pandas as pd
 
 from agent_core import scan_edges
@@ -7,43 +7,40 @@ from alerts import alert_edges
 
 def load_projections(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
-        # fallback: raw_stats_current.csv in repo
         alt = "data/raw_stats_current.csv"
         if os.path.exists(alt):
             path = alt
     if not os.path.exists(path):
         raise FileNotFoundError(f"Projections CSV not found at {path}.")
     df = pd.read_csv(path)
-    # Normalize columns we expect
+    # Normalize core columns
     for c in ("player", "team", "pos"):
         if c not in df.columns:
-            # Try common variants
-            for alt in [c.title(), c.upper(), "Position" if c=="pos" else c]:
-                if alt in df.columns:
-                    df.rename(columns={alt: c}, inplace=True)
+            for altc in [c.title(), c.upper(), "Position" if c=="pos" else c]:
+                if altc in df.columns:
+                    df.rename(columns={altc: c}, inplace=True)
                     break
     print(f"Loaded projections: {len(df):,} rows, {len(df.columns)} cols from {path}")
     return df
 
 def default_config():
-    # Books keys must match The Odds API bookmaker keys
     target_books = [
-        "draftkings", "fanduel", "caesars", "betmgm", "pointsbetus", "bet365",
-        "barstool", "espnbet", "betway"
+        "draftkings","fanduel","caesars","betmgm","pointsbetus","bet365",
+        "barstool","espnbet","betway"
     ]
     markets = {
         "base": [
-            "player_pass_yds", "player_rush_yds", "player_reception_yds",
-            "player_receptions", "player_pass_tds", "player_rush_tds",
-            "player_reception_tds", "player_interceptions",
-            "player_pass_completions", "player_longest_reception", "player_longest_rush"
+            "player_pass_yds","player_rush_yds","player_reception_yds",
+            "player_receptions","player_pass_tds","player_rush_tds",
+            "player_reception_tds","player_interceptions",
+            "player_pass_completions","player_longest_reception","player_longest_rush"
         ],
         "heavy": [
-            "player_pass_yds", "player_rush_yds", "player_reception_yds",
-            "player_receptions", "player_pass_tds", "player_rush_tds",
-            "player_reception_tds", "player_interceptions",
-            "player_pass_completions", "player_pass_attempts",
-            "player_longest_reception", "player_longest_rush"
+            "player_pass_yds","player_rush_yds","player_reception_yds",
+            "player_receptions","player_pass_tds","player_rush_tds",
+            "player_reception_tds","player_interceptions",
+            "player_pass_completions","player_pass_attempts",
+            "player_longest_reception","player_longest_rush"
         ]
     }
     sigma_defaults = {
@@ -65,7 +62,7 @@ def default_config():
         }
     }
     return {
-        "regions": "us",
+        "regions": "us,us2",
         "target_books": target_books,
         "markets": markets,
         "sigma_defaults": sigma_defaults,
@@ -80,26 +77,22 @@ def default_config():
     }
 
 def advice_lines(df: pd.DataFrame, threshold: float) -> str:
-    if df.empty:
+    if df is None or df.empty:
         return "No edges found."
-    # human readable market
-    def mread(k: str) -> str:
-        m = {
-            "player_pass_yds": "passing yards",
-            "player_rush_yds": "rushing yards",
-            "player_reception_yds": "receiving yards",
-            "player_receptions": "receptions",
-            "player_pass_tds": "pass TDs",
-            "player_rush_tds": "rush TDs",
-            "player_reception_tds": "rec TDs",
-            "player_interceptions": "interceptions",
-            "player_pass_completions": "pass completions",
-            "player_pass_attempts": "pass attempts",
-            "player_longest_reception": "longest reception",
-            "player_longest_rush": "longest rush",
-        }
-        return m.get(k, k.replace("_", " "))
-
+    name_map = {
+        "player_pass_yds": "passing yards",
+        "player_rush_yds": "rushing yards",
+        "player_reception_yds": "receiving yards",
+        "player_receptions": "receptions",
+        "player_pass_tds": "pass TDs",
+        "player_rush_tds": "rush TDs",
+        "player_reception_tds": "rec TDs",
+        "player_interceptions": "interceptions",
+        "player_pass_completions": "pass completions",
+        "player_pass_attempts": "pass attempts",
+        "player_longest_reception": "longest reception",
+        "player_longest_rush": "longest rush",
+    }
     keep = df[df["ev_per_unit"] >= threshold].copy()
     if keep.empty:
         return "No edges ≥ threshold."
@@ -107,7 +100,7 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
     for _, r in keep.head(50).iterrows():
         evp = f"{r['ev_per_unit']*100:.1f}%"
         lines.append(
-            f"{r['player']} {r['side']} {r['book_line']} {mread(r['market_key'])} — "
+            f"{r['player']} {r['side']} {r['book_line']} {name_map.get(r['market_key'], r['market_key'])} — "
             f"{r['book_odds']} ({r['best_book']}) | EV {evp} | {r['stake_u']}u"
         )
     return "\n".join(lines)
@@ -134,7 +127,7 @@ def main() -> int:
     )
 
     os.makedirs("artifacts", exist_ok=True)
-    if not df_edges.empty:
+    if df_edges is not None and not df_edges.empty:
         df_edges.to_csv("artifacts/edges.csv", index=False)
 
     adv = advice_lines(df_edges, threshold)
@@ -143,9 +136,7 @@ def main() -> int:
 
     print("\n=== ADVICE ===\n" + adv + "\n")
 
-    # Slack
     alert_edges(df_edges, threshold_ev=threshold)
-
     return 0
 
 if __name__ == "__main__":
