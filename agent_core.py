@@ -6,6 +6,13 @@ import requests
 import pandas as pd
 import numpy as np
 
+# ---------- Optional alerts hook ----------
+try:
+    # alerts.py must expose alert_edges(df, threshold_ev=0.06)
+    from alerts import alert_edges as _alert_edges
+except Exception:
+    _alert_edges = None  # run fine without alerts
+
 NFL_SPORT_KEY = "americanfootball_nfl"
 USER_AGENT = "nfl-prop-agent/1.0"
 CALL_LOG_PATH = os.environ.get("ODDS_API_CALL_LOG", "odds_api_calls.csv")
@@ -127,6 +134,46 @@ def sanity_line_ok(market_key: str, line: float) -> bool:
         return line is not None and line >= 5.5
     return True
 
+# Friendly labels for advice string
+MARKET_LABELS = {
+    "player_pass_yds": "passing yards",
+    "player_pass_tds": "passing TDs",
+    "player_rush_yds": "rushing yards",
+    "player_rush_tds": "rushing TDs",
+    "player_receiving_yds": "receiving yards",
+    "player_receptions": "receptions",
+    "player_reception_tds": "receiving TDs",
+    "player_interceptions": "interceptions (thrown)",
+    "player_pass_attempts": "pass attempts",
+    "player_pass_completions": "pass completions",
+    "player_longest_reception": "longest reception",
+    "player_longest_rush": "longest rush",
+}
+
+def _readable_market(mkey: str) -> str:
+    return MARKET_LABELS.get(mkey, mkey.replace("_", " "))
+
+def _build_advice_row(r: pd.Series) -> str:
+    """Create a one-liner like:
+       Joe Burrow OVER 268.5 passing yards — betmgm -110 | EV 6.2% | stake 1u ($10.00)
+    """
+    player = r.get("player", "")
+    side = r.get("side", "")
+    line = r.get("book_line", "")
+    market = _readable_market(r.get("market_key", ""))
+    book = r.get("best_book", "")
+    odds = r.get("book_odds", 0)
+    ev_pct = float(r.get("ev_per_unit", 0.0)) * 100.0
+    su = r.get("stake_u", 0.0)
+    sd = r.get("stake_$", 0.0)
+    try:
+        # nice formatting (no trailing .0)
+        line_txt = f"{float(line):g}"
+    except Exception:
+        line_txt = str(line)
+    stake_txt = f"{su:g}u" + (f" (${sd:,.2f})" if sd and sd > 0 else "")
+    return f"{player} {side} {line_txt} {market} — {book} {odds:+d} | EV {ev_pct:.1f}% | stake {stake_txt}"
+
 # -------------------- Variance blending --------------------
 def make_variance_blend(row: pd.Series, market_key: str, sigma_cfg: dict, alpha: float) -> float:
     pos = str(row.get("pos") or row.get("position") or "").upper()
@@ -194,6 +241,11 @@ def scan_edges(
     cfg keys:
       regions, target_books, sigma_defaults, blend_alpha, markets{base,heavy},
       bankroll, unit_pct, stake_bands
+
+    Environment variables honored:
+      EDGES_OUT         -> where to write CSV (default: edges_bestbook.csv)
+      ENABLE_ALERTS     -> "1" to send Slack alerts (default "1")
+      ALERT_MIN_EV      -> threshold EV for alerts, default 0.06 (6%)
     """
     regions = cfg.get("regions", "us")
     target_books = set(cfg.get("target_books", []))
@@ -227,7 +279,7 @@ def scan_edges(
         if not markets_list:
             break
         markets_csv = ",".join(markets_list)
-        ev_json = get_event_odds(api_key, event_id, regions=regions, odds_format="american", markets=markets_csv)
+        ev_json = get_event_odds(api_key, event_id, regions=regions, odds_format="american", markets_csv=markets_csv)
 
         home = (ev.get("home_team") or "").upper()
         away = (ev.get("away_team") or "").upper()
@@ -241,10 +293,10 @@ def scan_edges(
 
         for _, r in df_ev.iterrows():
             player = r.get("player") or r.get("name") or ""
-            if not player: 
+            if not player:
                 continue
             for mkey in markets_list:
-                if mkey not in r: 
+                if mkey not in r:
                     continue
                 try:
                     mu = float(r[mkey])
@@ -297,6 +349,28 @@ def scan_edges(
 
     df = pd.DataFrame(rows)
     if not df.empty:
+        # Sort + add readable columns
         df.sort_values(["ev_per_unit", "win_prob"], ascending=[False, False], inplace=True, kind="mergesort")
         df.reset_index(drop=True, inplace=True)
+        df["market_readable"] = df["market_key"].map(_readable_market)
+        df["advice"] = df.apply(_build_advice_row, axis=1)
+
+        # Save CSV for downstream apps (Streamlit, GH artifact, etc.)
+        out_path = os.getenv("EDGES_OUT", "edges_bestbook.csv")
+        try:
+            df.to_csv(out_path, index=False)
+            logging.info(f"[SAVE] edges -> {out_path} ({len(df)} rows)")
+        except Exception as e:
+            logging.warning(f"[SAVE] could not write {out_path}: {e}")
+
+        # Fire Slack/email alerts for high-EV edges
+        try:
+            if _alert_edges and os.getenv("ENABLE_ALERTS", "1") == "1":
+                threshold = float(os.getenv("ALERT_MIN_EV", "0.06"))
+                _alert_edges(df, threshold_ev=threshold)
+        except Exception as e:
+            logging.warning(f"[ALERTS] Skipping alerts: {e}")
+    else:
+        logging.info("[RESULT] No edges produced.")
+
     return df
