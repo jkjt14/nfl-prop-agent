@@ -1,141 +1,54 @@
-name: NFL Prop Agent (Scheduled)
+name: "Prop Agent: scan & alert"
 
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: 'Run mode'
-        type: choice
-        required: true
-        default: full
-        options:
-          - full
-          - projections-only
+  workflow_dispatch: {}
   schedule:
-    # 09:00 AM ET Tue–Sat (13:00 UTC)
-    - cron: '0 13 * * 2-6'
-    # Pre-kickoff sweeps (Thu 7:30 PM ET, Sun 12:30 PM ET, Mon 7:30 PM ET)
-    - cron: '30 23 * * 4'
-    - cron: '30 16 * * 0'
-    - cron: '30 23 * * 1'
+    - cron: "*/30 * * * *"  # every 30 minutes; adjust as you like
+
+permissions:
+  contents: read
 
 jobs:
-  run-agent:
+  run_agent:
     runs-on: ubuntu-latest
-    env:
-      # REQUIRED for full runs only (not used during projections-only)
-      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-      # OPTIONAL (only for Firestore push during full runs)
-      GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-      GOOGLE_APPLICATION_CREDENTIALS: ${{ github.workspace }}/sa.json
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---------------- R: install + fetch projections ----------------
-      - name: Install system libraries for R
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libssl-dev libxml2-dev build-essential libgit2-dev
-
-      - name: Set up R
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.3.3'
-
-      - name: Install R packages
-        run: |
-          Rscript -e 'install.packages(c("remotes","dplyr","readr","stringr"), repos="https://cloud.r-project.org")'
-          Rscript -e 'remotes::install_github("FantasyFootballAnalytics/ffanalytics")'
-
-      - name: Fetch weekly projections (FFA)
-        run: Rscript R/fetch_projections.R
-
-      - name: Upload FFA projections (artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: projections_ffa_week
-          path: data/projections_ffa_week.csv
-
-      # ---------------- Validate R output (NO Odds-API usage) ----------------
-      - name: Validate projections schema
-        run: |
-          python - <<'PY'
-          import pandas as pd, sys
-          df = pd.read_csv('data/projections_ffa_week.csv')
-          required = [
-              'player','team','pos',
-              'player_pass_yds','player_rush_yds','player_reception_yds','player_receptions',
-              'player_pass_tds','player_rush_tds','player_reception_tds'
-          ]
-          missing = [c for c in required if c not in df.columns]
-          print("Columns found:", list(df.columns))
-          if missing:
-              print("MISSING COLUMNS:", missing)
-              sys.exit(1)
-          print("Rows:", len(df))
-          # quick profiling
-          prof = df.describe(include='all')
-          prof.to_csv('projections_summary.csv')
-          print("Wrote projections_summary.csv")
-          PY
-
-      - name: Upload projections summary
-        uses: actions/upload-artifact@v4
-        with:
-          name: projections_summary
-          path: projections_summary.csv
-
-      # ---------------- Python agent (USES Odds-API) ----------------
-      # Run only for scheduled runs OR when you choose mode=full
-      - name: Set up Python
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install Python dependencies
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install "pandas<3.0" numpy requests pyyaml
 
-      - name: Materialize Firestore service account (optional)
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
+      # If your projections file is produced by another job/artifact, fetch it here.
+      # Otherwise ensure the CSV lives at data/projections.csv or set PROJECTIONS_CSV below.
+
+      - name: Run agent
         env:
-          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}  # optional, for alerts.py
+          ENABLE_ALERTS: "1"        # set "0" to disable alerts
+          ALERT_MIN_EV: "0.06"      # 6% EV threshold
+          EDGES_OUT: artifacts/edges_bestbook.csv
+          EDGES_JSON_OUT: artifacts/edges_bestbook.json
+          PROJECTIONS_CSV: data/projections.csv   # change if your CSV lives elsewhere
+          PROFILE: base
+          DAYS_FROM: "7"
+          MAX_CALLS: "1000"
+          TOP_PRINT: "15"
         run: |
-          if [ -n "$FIREBASE_SA_JSON" ]; then
-            echo "$FIREBASE_SA_JSON" > sa.json
-            echo "Service account JSON written to sa.json"
-          else
-            echo "No FIREBASE_SA_JSON secret set; skipping Firestore auth file."
-          fi
+          mkdir -p artifacts
+          python agent_cli.py --projections "$PROJECTIONS_CSV" --profile "$PROFILE"
 
-      - name: Run agent (base profile)
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
-        run: |
-          python agent_cli.py --projections data/projections_ffa_week.csv --out edges_bestbook.csv --profile base --days 7 --max-calls 5000
-
-      - name: Upload edges CSV
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: edges_bestbook
-          path: edges_bestbook.csv
-
-      - name: Upload API call log
-        if: ${{ github.event_name == 'schedule' || github.event.inputs.mode == 'full' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: odds_api_calls
-          path: odds_api_calls.csv
-          if-no-files-found: ignore
-
-      # Optional Firestore push on full runs
-      # - name: Push to Firestore
-      #   if: ${{ (github.event_name == 'schedule' || github.event.inputs.mode == 'full') && env.GOOGLE_CLOUD_PROJECT != '' && hashFiles('sa.json') != '' }}
-      #   run: |
-      #     PYDATE=$(date -u +'%Y_%m_%d')
-      #     python firestore_push.py --csv edges_bestbook.csv --collection "nfl_props/${PYDATE}/edges"
+          name: prop-agent-output
+          path: artifacts/*
+          if-no-files-found: error
