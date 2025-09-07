@@ -1,23 +1,27 @@
-name: FFA: fetch projections ➜ scan ➜ alert
+name: FFA: fetch ➜ scan ➜ alert
 
 on:
   workflow_dispatch:
     inputs:
       run_fetch:
         description: "Fetch projections with R first?"
+        required: true
         type: boolean
         default: true
       days_from:
-        description: "Scan days ahead"
-        type: number
-        default: 7
+        description: "Days ahead to scan (string)"
+        required: true
+        type: string
+        default: "7"
       profile:
-        description: "Market profile (base/heavy)"
+        description: "Market profile"
+        required: true
         type: choice
         options: [base, heavy]
         default: base
       alert_threshold:
-        description: "Slack alert EV threshold (e.g. 0.06 = 6%)"
+        description: "Slack alert EV threshold (e.g. 0.06)"
+        required: true
         type: string
         default: "0.06"
 
@@ -44,28 +48,25 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      # System libs needed for chromote/curl & headless Chrome
-      - name: Install system dependencies
+      - name: System deps for R/Chromium
         run: |
           sudo apt-get update
           sudo apt-get install -y libcurl4-openssl-dev libnss3 libgbm1 fonts-liberation
           sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
 
-      - name: Install R packages (minimal)
+      - name: Install R packages
         run: |
           Rscript -e 'install.packages(c("chromote","fs","jsonlite","httr2","rvest","readr","dplyr","stringr"), repos="https://cloud.r-project.org", dependencies=TRUE)'
 
       - name: Create artifacts dir
         run: mkdir -p artifacts
 
-      - name: Download CSV from Shiny (or raw if cookie+url set)
+      - name: Download CSV from Shiny (or direct if cookie+url set)
         env:
-          # Shiny route (default)
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
           FFA_DOWNLOAD_TIMEOUT: "120"
           FFA_OUT: artifacts/projections.csv
           CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-          # Optional direct-download route (skips Shiny if both present)
           FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
           FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}
         run: Rscript scripts/ffa_shiny_download.R
@@ -78,22 +79,20 @@ jobs:
 
   scan_and_alert:
     runs-on: ubuntu-latest
-    needs: [fetch_projections]
-    if: always()  # still runs even if fetch was skipped or failed; will fall back to repo CSV
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download projections artifact (if produced)
+      - name: Try to download projections from previous job (optional)
         uses: actions/download-artifact@v4
         with:
           name: projections
           path: projections
         continue-on-error: true
 
-      - name: Choose projections file (artifact vs repo fallback)
+      - name: Choose projections file (artifact or repo fallback)
         run: |
           if [ -f projections/projections.csv ]; then
             echo "PROJECTIONS_CSV=projections/projections.csv" >> $GITHUB_ENV
@@ -122,12 +121,14 @@ jobs:
           PROJECTIONS_CSV: ${{ env.PROJECTIONS_CSV }}
           EDGES_OUT: artifacts/edges_bestbook.csv
           EDGES_JSON_OUT: artifacts/edges_bestbook.json
+          DAYS_FROM: ${{ inputs.days_from }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           mkdir -p artifacts
           python agent_cli.py \
             --config agent_config.yaml \
-            --profile "${{ inputs.profile }}" \
-            --days-from "${{ inputs.days_from }}"
+            --profile "$PROFILE" \
+            --days-from "$DAYS_FROM"
 
       - name: Upload edges artifact
         uses: actions/upload-artifact@v4
