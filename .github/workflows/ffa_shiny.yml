@@ -33,12 +33,15 @@ jobs:
       - name: Create artifacts dir
         run: mkdir -p artifacts
 
-      - name: Download CSV from Shiny
+      - name: Download CSV from Shiny (auto-discover)
         env:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
           FFA_DOWNLOAD_TIMEOUT: "150"
           FFA_OUT: artifacts/ffa_raw_stats.csv
+          # Optional: nudge the picker toward a specific button by text
+          FFA_DOWNLOAD_MATCH: proj
+          # Optional: if you know the exact CSS selector, uncomment next line:
+          # FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
         run: Rscript scripts/ffa_shiny_download.R
 
       - name: Upload artifact
