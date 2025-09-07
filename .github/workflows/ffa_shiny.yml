@@ -23,14 +23,18 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      # System libs for 'curl' (chromote dependency) + common headless chrome deps
+      # System libs for curl (chromote dep) + common headless Chrome deps
       - name: Install system dependencies
+        shell: bash
         run: |
+          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             libcurl4-openssl-dev \
-            libnss3 libgbm1 libxss1 libasound2 \
-            libatk-bridge2.0-0 libgtk-3-0
+            libnss3 libgbm1 libxss1 libatk-bridge2.0-0 libgtk-3-0 \
+            fonts-liberation xdg-utils
+          # audio lib name differs across Ubuntu releases
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
 
       - name: Install R packages (minimal)
         run: |
@@ -45,13 +49,13 @@ jobs:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
           # Optional: click a tab/link by its visible text before searching for the download button
           FFA_PRECLICK_TEXT: Projections
-          # Leave blank to auto-discover. If needed later, set to a CSS selector like: a#projections_page-proj-download_projections-download
+          # Leave blank to auto-discover; if needed later set a CSS selector, e.g. a#projections_page-proj-download_projections-download
           FFA_DOWNLOAD_SELECTOR: ""
-          # Seconds to wait for render + download
+          # Seconds to wait for render + download (bump if needed)
           FFA_DOWNLOAD_TIMEOUT: "150"
           # Output file path
           FFA_OUT: artifacts/ffa_raw_stats.csv
-          # Point chromote at the Chrome we installed
+          # Use the Chrome from setup-chrome
           CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: Rscript scripts/ffa_shiny_download.R
 
