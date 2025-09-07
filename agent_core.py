@@ -180,44 +180,133 @@ def make_variance_blend(row: pd.Series, market_key: str, sigma_cfg: dict, alpha:
     return math.sqrt(alpha * (src_sd ** 2) + (1 - alpha) * (base_sigma ** 2))
 
 # -------------------- Best offer per player --------------------
-def best_offer_for_player(event_json: dict, player_name: str, market_key: str, side: str, target_books: set):
+def _names_match(player_needle: str, cand: str) -> bool:
+    """Loose but safe player-name match.
+    Tries full-name containment, token subset, and last-name fallback."""
+    if not player_needle or not cand:
+        return False
+    needle = normalize_name(player_needle)
+    hay = normalize_name(cand)
+    if not needle or not hay:
+        return False
+    if needle in hay or hay in needle:
+        return True
+    # token subset check (e.g., "joe burrow" vs "burrow joe over")
+    n_tokens = set(needle.split())
+    h_tokens = set(hay.split())
+    if n_tokens.issubset(h_tokens) or h_tokens.issubset(n_tokens):
+        return True
+    # last-name fallback (common when books show only the surname)
+    last = needle.split()[-1]
+    if len(last) >= 4 and last in h_tokens:
+        return True
+    return False
+
+def _normalize_side(s: str) -> str:
+    s = normalize_name(s or "")
+    if s.startswith("over"):
+        return "OVER"
+    if s.startswith("under"):
+        return "UNDER"
+    return ""  # unknown / not provided
+
+def best_offer_for_player(
+    event_json: dict,
+    player_name: str,
+    market_key: str,
+    side: str,
+    target_books: set
+):
     """
     Returns (book, line, price) for the best available outcome for a given player+market+side.
+    Selection logic:
+      - OVER  => prefer the LOWEST line, then better (higher) price
+      - UNDER => prefer the HIGHEST line, then better (higher) price
+    Only applies book filtering if target_books is non-empty.
     """
+    want_side = (_normalize_side(side) or "OVER")  # default to OVER if malformed
     player_norm = normalize_name(player_name)
     best: Optional[Tuple[str, float, int]] = None
-    for bm in (event_json or {}).get("bookmakers", []) or []:
-        bk = bm.get("key", "")
+
+    for bm in ((event_json or {}).get("bookmakers", []) or []):
+        bk = bm.get("key", "") or ""
+        # filter only if explicit book list is provided
         if target_books and bk not in target_books:
             continue
-        for mk in bm.get("markets", []) or []:
+
+        for mk in (bm.get("markets", []) or []):
             if mk.get("key") != market_key:
                 continue
-            for outc in mk.get("outcomes", []) or []:
-                desc = normalize_name(outc.get("description") or outc.get("name") or outc.get("participant") or "")
-                if player_norm not in desc:
+
+            for outc in (mk.get("outcomes", []) or []):
+                # Try multiple fields books may use
+                # Player label may be in 'name' or 'participant'; 'description' often holds "Over/Under"
+                player_label = (
+                    outc.get("participant")
+                    or outc.get("name")
+                    or outc.get("description")
+                    or ""
+                )
+                desc_side = (
+                    outc.get("description")
+                    or outc.get("label")
+                    or outc.get("side")
+                    or ""
+                )
+                have_side = _normalize_side(desc_side)
+
+                # Side must match if the book provides it explicitly
+                if have_side and have_side != want_side:
                     continue
-                line = outc.get("point")
-                price = outc.get("price")
-                if line is None or price is None:
+
+                # Ensure the outcome is for the right player
+                if not _names_match(player_norm, player_label):
+                    # Some feeds invert fields: player in 'name', side in 'description' (already handled),
+                    # but also try 'outc.get("name")' vs 'outc.get("description")' cross-wise:
+                    alt_player_label = outc.get("name") or outc.get("participant") or ""
+                    if not _names_match(player_norm, alt_player_label):
+                        continue
+
+                # Line / odds fields vary by book
+                raw_line = outc.get("point", outc.get("handicap", outc.get("line")))
+                raw_price = outc.get("price", outc.get("odds", outc.get("american")))
+
+                if raw_line is None or raw_price is None:
                     continue
+
+                # Cast robustly
                 try:
-                    line = float(line); price = int(price)
+                    line = float(raw_line)
                 except Exception:
                     continue
+                try:
+                    price = int(str(raw_price))
+                except Exception:
+                    # handle "+120" or "120" style strings
+                    try:
+                        price = int(str(raw_price).replace("+", "").strip())
+                        # if it had '+' removed, restore sign (+ becomes positive, which is fine)
+                    except Exception:
+                        continue
+
                 if not sanity_line_ok(market_key, line):
                     continue
+
                 cand = (bk, line, price)
+
                 if best is None:
                     best = cand
                 else:
-                    if side == "OVER":
-                        if cand[1] < best[1] or (cand[1] == best[1] and cand[2] > best[2]):
+                    # OVER: prefer lower line; UNDER: prefer higher line; tie-break on better (higher) price
+                    if want_side == "OVER":
+                        if (cand[1] < best[1]) or (cand[1] == best[1] and cand[2] > best[2]):
                             best = cand
-                    else:
-                        if cand[1] > best[1] or (cand[1] == best[1] and cand[2] > best[2]):
+                    else:  # UNDER
+                        if (cand[1] > best[1]) or (cand[1] == best[1] and cand[2] > best[2]):
                             best = cand
+
     return best
+
 
 # -------------------- Main scan --------------------
 def _resolve_markets(cfg: dict, profile: str) -> List[str]:
