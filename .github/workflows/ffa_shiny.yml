@@ -19,9 +19,16 @@ jobs:
           use-public-rspm: true
 
       - name: Setup Chrome
+        id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      # Install only what the downloader needs. No repo-wide scan.
+      # FIX: system libs needed by R package 'curl' (dependency of chromote)
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev
+
+      # Keep it minimal — only what the downloader needs
       - name: Install R packages (minimal)
         run: |
           Rscript -e 'install.packages(c("chromote","fs","jsonlite"), dependencies=TRUE, repos="https://cloud.r-project.org")'
@@ -31,10 +38,16 @@ jobs:
 
       - name: Download CSV from Shiny
         env:
+          # Your Shiny app URL
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
+          # CSS selector for the download button (from your URL)
           FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
+          # Give Shiny time to render & download
           FFA_DOWNLOAD_TIMEOUT: "120"
+          # Output path for the CSV
           FFA_OUT: artifacts/ffa_raw_stats.csv
+          # Point chromote to the Chrome we installed
+          CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: Rscript scripts/ffa_shiny_download.R
 
       - name: Upload artifact
