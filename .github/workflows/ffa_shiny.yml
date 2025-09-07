@@ -1,13 +1,14 @@
 name: "FFA: Shiny CSV Fetch"
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   shiny_fetch:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -22,31 +23,35 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      # FIX: system libs needed by R package 'curl' (dependency of chromote)
+      # System libs for 'curl' (chromote dependency) + common headless chrome deps
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev
+          sudo apt-get install -y \
+            libcurl4-openssl-dev \
+            libnss3 libgbm1 libxss1 libasound2 \
+            libatk-bridge2.0-0 libgtk-3-0
 
-      # Keep it minimal — only what the downloader needs
       - name: Install R packages (minimal)
         run: |
-          Rscript -e 'install.packages(c("chromote","fs","jsonlite"), dependencies=TRUE, repos="https://cloud.r-project.org")'
+          Rscript -e 'install.packages(c("chromote","fs","jsonlite"), repos="https://cloud.r-project.org")'
 
       - name: Create artifacts dir
         run: mkdir -p artifacts
 
       - name: Download CSV from Shiny
         env:
-          # Your Shiny app URL
+          # Base app URL (no session tokens)
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          # CSS selector for the download button (from your URL)
-          FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
-          # Give Shiny time to render & download
-          FFA_DOWNLOAD_TIMEOUT: "120"
-          # Output path for the CSV
+          # Optional: click a tab/link by its visible text before searching for the download button
+          FFA_PRECLICK_TEXT: Projections
+          # Leave blank to auto-discover. If needed later, set to a CSS selector like: a#projections_page-proj-download_projections-download
+          FFA_DOWNLOAD_SELECTOR: ""
+          # Seconds to wait for render + download
+          FFA_DOWNLOAD_TIMEOUT: "150"
+          # Output file path
           FFA_OUT: artifacts/ffa_raw_stats.csv
-          # Point chromote to the Chrome we installed
+          # Point chromote at the Chrome we installed
           CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: Rscript scripts/ffa_shiny_download.R
 
