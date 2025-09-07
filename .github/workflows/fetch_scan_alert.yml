@@ -1,42 +1,26 @@
-name: "FFA fetch → scan → alert"
+name: NFL: Fetch → Scan → Alert
 
 on:
   workflow_dispatch:
     inputs:
-      run_fetch:
-        description: "Fetch projections with R first?"
+      fetch:
+        description: "Fetch projections via Shiny first?"
         required: true
         type: boolean
         default: true
-      days_from:
-        description: "Days ahead to scan"
-        required: true
-        type: string
-        default: "7"
-      profile:
-        description: "Market profile"
-        required: true
-        type: choice
-        options:
-          - base
-          - heavy
-        default: base
-      alert_threshold:
-        description: "Slack alert EV threshold (e.g. 0.06)"
-        required: true
-        type: string
+      threshold_ev:
+        description: "EV threshold for alerts (e.g., 0.06)"
+        required: false
         default: "0.06"
-
-concurrency:
-  group: prop-agent
-  cancel-in-progress: true
+      profile:
+        description: "Markets profile (base/heavy)"
+        required: false
+        default: "base"
 
 jobs:
   fetch_projections:
-    if: ${{ inputs.run_fetch }}
+    if: ${{ inputs.fetch }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,28 +34,25 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
-      - name: System deps for R/Chromium
+      - name: System libs for R 'curl' + headless chrome
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libnss3 libgbm1 fonts-liberation
-          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
+          sudo apt-get install -y libcurl4-openssl-dev libnss3 libasound2t64
 
-      - name: Install R packages
+      - name: Install minimal R deps
         run: |
-          Rscript -e 'install.packages(c("chromote","fs","jsonlite","httr2","rvest","readr","dplyr","stringr"), repos="https://cloud.r-project.org", dependencies=TRUE)'
+          Rscript -e 'install.packages(c("chromote","fs","jsonlite"), repos="https://cloud.r-project.org")'
 
       - name: Create artifacts dir
         run: mkdir -p artifacts
 
-      - name: Download CSV from Shiny (or direct if cookie+url set)
+      - name: Download projections CSV from Shiny
         env:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
+          FFA_DOWNLOAD_SELECTOR: 'a[data-export="projections"]'
           FFA_DOWNLOAD_TIMEOUT: "120"
           FFA_OUT: artifacts/projections.csv
           CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-          # Optional direct-download fallback if you have them:
-          FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
-          FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}
         run: Rscript scripts/ffa_shiny_download.R
 
       - name: Upload projections artifact
@@ -82,59 +63,60 @@ jobs:
 
   scan_and_alert:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    needs: [fetch_projections]
+    if: ${{ always() && ( !inputs.fetch || needs.fetch_projections.result == 'success' ) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Try to download projections from previous job (optional)
+      - name: Create artifacts dir
+        run: mkdir -p artifacts data
+
+      - name: Download projections artifact (if fetched)
+        if: ${{ inputs.fetch }}
         uses: actions/download-artifact@v4
         with:
           name: projections
-          path: projections
-        continue-on-error: true
+          path: data
 
-      - name: Choose projections file (artifact or repo fallback)
+      - name: Show projections file
         run: |
-          if [ -f projections/projections.csv ]; then
-            echo "PROJECTIONS_CSV=projections/projections.csv" >> $GITHUB_ENV
+          ls -l data || true
+          if [ -f data/projections.csv ]; then
+            echo "Found projections.csv"
+            head -n 3 data/projections.csv || true
+          elif [ -f data/raw_stats_current.csv ]; then
+            echo "Falling back to raw_stats_current.csv"
           else
-            echo "PROJECTIONS_CSV=data/projections.csv" >> $GITHUB_ENV
+            echo "No projections file present; expecting data/projections.csv in repo if fetch=false."
           fi
-          echo "Using PROJECTIONS_CSV=$PROJECTIONS_CSV"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install Python deps
         run: |
           python -m pip install -U pip
-          pip install pandas numpy requests scipy pyyaml
+          # Minimal deps for the agent + alerts
+          python -m pip install pandas numpy requests
 
-      - name: Run agent (scan + Slack alerts)
+      - name: Run scan + alert
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          ENABLE_ALERTS: "1"
-          ALERT_MIN_EV: ${{ inputs.alert_threshold }}
-          PROJECTIONS_CSV: ${{ env.PROJECTIONS_CSV }}
-          EDGES_OUT: artifacts/edges_bestbook.csv
-          EDGES_JSON_OUT: artifacts/edges_bestbook.json
-          DAYS_FROM: ${{ inputs.days_from }}
-          PROFILE: ${{ inputs.profile }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          EDGE_THRESHOLD: ${{ inputs.threshold_ev }}
+          MARKETS_PROFILE: ${{ inputs.profile }}
+          # Use the fetched artifact if present, else look for repo file
+          PROJECTIONS_PATH: data/projections.csv
         run: |
-          mkdir -p artifacts
-          python agent_cli.py \
-            --config agent_config.yaml \
-            --profile "$PROFILE" \
-            --days-from "$DAYS_FROM"
+          python agent_cli.py || exit 1
 
-      - name: Upload edges artifact
+      - name: Upload edges artifact(s)
         uses: actions/upload-artifact@v4
         with:
           name: edges
-          path: artifacts/*
+          path: |
+            artifacts/edges.csv
+            artifacts/advice.txt
