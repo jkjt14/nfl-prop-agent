@@ -19,12 +19,17 @@ jobs:
           use-public-rspm: true
 
       - name: Setup Chrome
+        id: chrome
         uses: browser-actions/setup-chrome@v1
 
+      # System libs Chrome often needs on ubuntu-latest (24.04 images use *t64 suffixed pkgs)
       - name: Install system libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libasound2t64
+          sudo apt-get install -y \
+            libasound2t64 libnss3 libxss1 libx11-xcb1 libxcomposite1 libxrandr2 \
+            libxdamage1 libgbm1 libgtk-3-0 xdg-utils fonts-liberation libxshmfence1 \
+            libcurl4-openssl-dev
 
       - name: Install R packages
         run: |
@@ -36,12 +41,14 @@ jobs:
       - name: Download CSV from Shiny (auto-discover)
         env:
           FFA_SHINY_URL: https://ffashiny.shinyapps.io/newApp/
-          FFA_DOWNLOAD_TIMEOUT: "150"
+          FFA_DOWNLOAD_TIMEOUT: "180"
           FFA_OUT: artifacts/ffa_raw_stats.csv
-          # Optional: nudge the picker toward a specific button by text
+          # Optional: bias the auto-picker by text (case-insensitive)
           FFA_DOWNLOAD_MATCH: proj
-          # Optional: if you know the exact CSS selector, uncomment next line:
-          # FFA_DOWNLOAD_SELECTOR: 'a#projections_page-proj-download_projections-download'
+          # Wire chromote to the Chrome we installed:
+          CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          # Headless flags that work well on GitHub runners
+          CHROMOTE_CHROME_ARGS: --headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --no-default-browser-check
         run: Rscript scripts/ffa_shiny_download.R
 
       - name: Upload artifact
