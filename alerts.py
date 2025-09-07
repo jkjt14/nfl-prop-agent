@@ -1,43 +1,56 @@
 # alerts.py
-import os, requests
+import os, json, math
+from typing import Optional
+import requests
+import pandas as pd
 
-SLACK_WEBHOOK = os.getenv("SLACK_WEBHOOK_URL", "")
+def _fmt_pct(x: float) -> str:
+    return f"{x*100:.1f}%"
 
-def post_slack(text, blocks=None):
-    if not SLACK_WEBHOOK:
-        # Quiet no-op if webhook not configured
-        return False
-    payload = {"text": text}
-    if blocks:
-        payload["blocks"] = blocks
-    r = requests.post(SLACK_WEBHOOK, json=payload, timeout=10)
-    r.raise_for_status()
-    return True
+def _market_readable(mkey: str) -> str:
+    m = {
+        "player_pass_yds": "passing yards",
+        "player_rush_yds": "rushing yards",
+        "player_reception_yds": "receiving yards",
+        "player_receptions": "receptions",
+        "player_pass_tds": "pass TDs",
+        "player_rush_tds": "rush TDs",
+        "player_reception_tds": "rec TDs",
+        "player_interceptions": "interceptions",
+        "player_pass_completions": "pass completions",
+        "player_pass_attempts": "pass attempts",
+        "player_longest_reception": "longest reception",
+        "player_longest_rush": "longest rush",
+    }
+    return m.get(mkey, mkey.replace("_", " "))
 
-def alert_edges(df, threshold_ev=0.06):
-    """Send Slack messages for rows where df['ev'] >= threshold_ev.
-    Expects columns: player, side, line, market_readable, book, price, ev, stake_u
-    """
-    # Make sure required columns exist
-    required = {"player","side","line","market_readable","book","price","ev","stake_u"}
-    missing = required - set(map(str, df.columns))
-    if missing:
-        raise ValueError(f"alert_edges: df is missing columns: {sorted(missing)}")
-
-    hits = df[df["ev"] >= threshold_ev].copy()
-    if hits.empty:
-        return 0
-
-    hits = hits.sort_values("ev", ascending=False).head(12)
-    blocks = []
-    for _, r in hits.iterrows():
-        advice = (
-            f"*{r['player']}* — *{r['side']} {r['line']} {r['market_readable']}*  "
-            f"@ *{r['book']}* ({int(r['price']):+d})  —  "
-            f"EV *{r['ev']*100:.1f}%*  —  Stake *{r['stake_u']:.2f}u*"
+def format_advice(df: pd.DataFrame, threshold: float) -> str:
+    lines = []
+    for _, r in df.iterrows():
+        if r["ev_per_unit"] < threshold:
+            continue
+        evp = _fmt_pct(r["ev_per_unit"])
+        line = (
+            f"{r['player']} {r['side']} {r['book_line']} {_market_readable(r['market_key'])} — "
+            f"{r['book_odds']} ({r['best_book']}) | EV {evp} | {r['stake_u']}u"
         )
-        blocks += [{"type": "section", "text": {"type": "mrkdwn", "text": advice}},
-                   {"type": "divider"}]
+        lines.append(line)
+    if not lines:
+        return "No edges ≥ threshold."
+    return "\n".join(lines[:25])
 
-    post_slack(f"{len(hits)} edges ≥ {threshold_ev*100:.0f}% EV", blocks)
-    return len(hits)
+def alert_edges(df: pd.DataFrame, threshold_ev: float = 0.06, webhook: Optional[str] = None) -> None:
+    webhook = webhook or os.environ.get("SLACK_WEBHOOK", "")
+    msg = format_advice(df, threshold_ev)
+    if not webhook:
+        print("[SLACK] Webhook not set; printing instead:\n" + msg)
+        return
+    payload = {"text": "*NFL Edges*\n" + msg}
+    try:
+        resp = requests.post(webhook, data=json.dumps(payload), headers={"Content-Type": "application/json"}, timeout=12)
+        if resp.status_code >= 400:
+            print(f"[SLACK] Error {resp.status_code}: {resp.text}")
+        else:
+            print("[SLACK] Posted advice.")
+    except Exception as e:
+        print(f"[SLACK] Exception: {e}")
