@@ -1,4 +1,4 @@
-name: FFA: fetch ➜ scan ➜ alert
+name: "FFA fetch → scan → alert"
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         type: boolean
         default: true
       days_from:
-        description: "Days ahead to scan (string)"
+        description: "Days ahead to scan"
         required: true
         type: string
         default: "7"
@@ -17,7 +17,9 @@ on:
         description: "Market profile"
         required: true
         type: choice
-        options: [base, heavy]
+        options:
+          - base
+          - heavy
         default: base
       alert_threshold:
         description: "Slack alert EV threshold (e.g. 0.06)"
@@ -67,6 +69,7 @@ jobs:
           FFA_DOWNLOAD_TIMEOUT: "120"
           FFA_OUT: artifacts/projections.csv
           CHROMOTE_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+          # Optional direct-download fallback if you have them:
           FFA_COOKIE: ${{ secrets.FFA_COOKIE }}
           FFA_RAW_STATS_URL: ${{ secrets.FFA_RAW_STATS_URL }}
         run: Rscript scripts/ffa_shiny_download.R
