@@ -9,6 +9,7 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+
 shiny_url <- Sys.getenv("FFA_SHINY_URL", "https://ffashiny.shinyapps.io/newApp/")
 download_selector <- Sys.getenv(
   "FFA_DOWNLOAD_SELECTOR",
