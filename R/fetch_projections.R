@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
 })
 
 # --- 1) SCRAPE the current week (leave season/week NULL to auto-detect current) ---
-# You can edit 'src' to sources you trust. The README documents weekly sources.  :contentReference[oaicite:1]{index=1}
+# You can edit 'src' to sources you trust. The README documents weekly sources.
 scr <- scrape_data(
   src = c("CBS","ESPN","FantasyPros","NumberFire","NFL","FFToday","FantasySharks","FleaFlicker","FantasyFootballNerd"),
   pos = c("QB","RB","WR","TE"),
@@ -20,7 +20,7 @@ scr <- scrape_data(
 )
 
 # --- 2) BUILD blended projections table (weighted average per FFA) ---
-proj <- projections_table(scr, avg_type = "weighted")  # average|robust|weighted  :contentReference[oaicite:2]{index=2}
+proj <- projections_table(scr, avg_type = "weighted")  # average|robust|weighted
 
 # proj now has standardized stat columns per position.
 # We'll map them to the column names your Python agent expects.
