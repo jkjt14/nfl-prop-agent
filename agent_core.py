@@ -466,6 +466,9 @@ def scan_edges(
                 except Exception:
                     bump(f"bad_projection_value::{mkey}")
                     continue
+                if pd.isna(r[mkey]):
+                    bump(f"missing_projection_value::{mkey}")
+                    continue
                 sd = make_variance_blend(r, mkey, sigma_defaults, alpha)
                 for side in ("OVER", "UNDER"):
                     offer = best_offer_for_player(ev_json, player, mkey, side, target_books)
@@ -539,5 +542,14 @@ def scan_edges(
         f.write("reasons:\n")
         for k, v in sorted(diag["reasons"].items(), key=lambda kv: (-kv[1], kv[0])):
             f.write(f"  {k}: {v}\n")
+        missing_proj = {
+            reason.partition("::")[2]: count
+            for reason, count in diag["reasons"].items()
+            if reason.startswith("missing_projection_value::")
+        }
+        if missing_proj:
+            f.write("missing_projection_values:\n")
+            for market, count in sorted(missing_proj.items(), key=lambda kv: (-kv[1], kv[0])):
+                f.write(f"  {market}: {count}\n")
 
     return df
