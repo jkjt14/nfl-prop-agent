@@ -13,8 +13,8 @@ import pandas as pd
 from agent_core import scan_edges
 from alerts import alert_edges
 from config import load_config
-from cleaning import clean_projections 
-
+from cleaning import clean_projections
+from file_finder import resolve_projection_path  # NEW
 
 STAT_TO_MARKET = {
     "pass_yds": "player_pass_yds",
@@ -77,17 +77,8 @@ def _ensure_market_columns(df: pd.DataFrame) -> None:
 
 def load_projections(path: str) -> pd.DataFrame:
     """Load projection CSV, clean it and normalize columns for markets."""
-    # Fallback to canonical raw path if PROJECTIONS_PATH is missing
-    if not os.path.exists(path):
-        alt = "data/raw_stats_current.csv"
-        if os.path.exists(alt):
-            path = alt
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Projections CSV not found at {path}.")
-
     df = pd.read_csv(path)
     df = clean_projections(df)
-
     logging.info("Loaded/cleaned projections: %s rows, %s cols from %s",
                  len(df), len(df.columns), path)
     return df
@@ -132,10 +123,16 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
 
 
 def main() -> int:
-    """Run the scan and emit artifacts/alerts."""
     logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
 
-    proj_path = os.environ.get("PROJECTIONS_PATH", "data/projections.csv")
+    # Prefer env var; else auto-pick latest raw_stats_YYYY_wkN.csv in data/
+    pref = os.environ.get("PROJECTIONS_PATH", "").strip() or None
+    proj_path, year, week = resolve_projection_path(pref)
+    if year and week:
+        logging.info("Using projections file for %d week %d: %s", year, week, proj_path)
+    else:
+        logging.info("Using projections file: %s", proj_path)
+
     api_key = os.environ.get("ODDS_API_KEY", "")
     if not api_key:
         logging.error("Missing ODDS_API_KEY.")
@@ -143,9 +140,10 @@ def main() -> int:
 
     threshold = float(os.environ.get("EDGE_THRESHOLD", "0.06"))
     profile = os.environ.get("MARKETS_PROFILE", "base")
-    df_proj = load_projections(proj_path)
 
+    df_proj = load_projections(proj_path)
     cfg = load_config()
+
     df_edges = scan_edges(
         df_proj,
         cfg,
@@ -164,7 +162,6 @@ def main() -> int:
         f.write(adv + "\n")
 
     logging.info("\n=== ADVICE ===\n%s\n", adv)
-
     alert_edges(df_edges, threshold_ev=threshold)
     return 0
 
