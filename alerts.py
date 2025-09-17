@@ -42,15 +42,17 @@ def format_advice(df: pd.DataFrame, threshold: float) -> str:
     """Create a multi-line Slack message summarizing high-EV edges."""
     if df is None or df.empty:
         return "No edges found."
+    eligible = df[df["ev_per_unit"] >= threshold].copy()
+    if eligible.empty:
+        return "No edges ≥ threshold."
+    eligible.sort_values(["ev_per_unit", "win_prob"], ascending=[False, False], inplace=True, kind="mergesort")
     lines = []
-    for _, r in df.iterrows():
-        if r["ev_per_unit"] < threshold:
-            continue
+    for _, r in eligible.head(25).iterrows():
         lines.append(
             f"{r['player']} {r['side']} {r['book_line']} {_market_readable(r['market_key'])} — "
             f"{r['book_odds']} ({r['best_book']}) | EV {_fmt_pct(r['ev_per_unit'])} | {r['stake_u']}u"
         )
-    return "\n".join(lines[:25]) if lines else "No edges ≥ threshold."
+    return "\n".join(lines) if lines else "No edges ≥ threshold."
 
 def _resolve_webhook(candidate: Optional[str]) -> str:
     """Return the preferred Slack webhook URL from config/env fallbacks."""
