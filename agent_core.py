@@ -274,14 +274,16 @@ def best_offer_for_player(
                 if mk.get("key") != market_key:
                     continue
                 for outc in mk.get("outcomes", []) or []:
-                    pstr = (
-                        outc.get("description")
-                        or outc.get("participant")
-                        or outc.get("player")
-                        or outc.get("player_name")
-                        or outc.get("name")
-                        or ""
+                    pstr = next(
+                        (
+                            outc.get(field)
+                            for field in ("participant", "player", "player_name", "name")
+                            if outc.get(field)
+                        ),
+                        None,
                     )
+                    if not pstr:
+                        pstr = outc.get("description") or ""
                     if not _player_name_match(pstr, player_norm):
                         continue
                     line = outc.get("point")
