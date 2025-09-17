@@ -22,6 +22,7 @@ from config import load_config
 
 STAT_TO_MARKET = {
     "pass_yds": "player_pass_yds",
+codex/conduct-code-review-for-model-results-xb1agb
     "pass_yards": "player_pass_yds",
     "passing_yards": "player_pass_yds",
     "pass_tds": "player_pass_tds",
@@ -64,11 +65,27 @@ STAT_TO_MARKET = {
     "pass_long": "player_pass_longest_completion",
     "pass_longest": "player_pass_longest_completion",
     "pass_longest_completion": "player_pass_longest_completion",
+    "pass_tds": "player_pass_tds",
+    "pass_int": "player_pass_interceptions",
+    "pass_attempts": "player_pass_attempts",
+    "pass_att": "player_pass_attempts",
+    "pass_comp": "player_pass_completions",
+    "pass_completions": "player_pass_completions",
+    "rush_yds": "player_rush_yds",
+    "rush_tds": "player_rush_tds",
+    "rush_att": "player_rush_attempts",
+    "rush_attempts": "player_rush_attempts",
+    "rec": "player_receptions",
+    "receptions": "player_receptions",
+    "rec_yds": "player_reception_yds",
+    "rec_tds": "player_reception_tds",
+ main
     "pass_rush_rec_yds": "player_pass_rush_reception_yds",
     "pass_rush_rec_tds": "player_pass_rush_reception_tds",
 }
 
 
+codex/conduct-code-review-for-model-results-xb1agb
 def _normalize_alias(name: str) -> str:
     """Return a normalized key for projection/stat column names."""
 
@@ -158,6 +175,44 @@ def _ensure_market_columns(df: pd.DataFrame) -> None:
             "Normalized projection columns for markets: %s",
             ", ".join(sorted(set(created + created_sd + combo_created))),
         )
+
+def _ensure_market_columns(df: pd.DataFrame) -> None:
+    """Backfill ``player_*`` market columns from common projection aliases."""
+
+    created = []
+    for alias, market in STAT_TO_MARKET.items():
+        if market not in df.columns and alias in df.columns:
+            df[market] = df[alias]
+            created.append(market)
+        sd_alias = f"{alias}_sd"
+        sd_market = f"{market}_sd"
+        if sd_market not in df.columns and sd_alias in df.columns:
+            df[sd_market] = df[sd_alias]
+
+    # Combo helpers – these are additive stats that appear under multiple names.
+    if "player_pass_rush_reception_yds" not in df.columns:
+        comps = [c for c in ("pass_yds", "rush_yds", "rec_yds") if c in df.columns]
+        if len(comps) == 3:
+            df["player_pass_rush_reception_yds"] = df[comps].fillna(0).sum(axis=1)
+            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
+            if sd_cols:
+                df["player_pass_rush_reception_yds_sd"] = np.sqrt(
+                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
+                )
+
+    if "player_pass_rush_reception_tds" not in df.columns:
+        comps = [c for c in ("pass_tds", "rush_tds", "rec_tds") if c in df.columns]
+        if len(comps) == 3:
+            df["player_pass_rush_reception_tds"] = df[comps].fillna(0).sum(axis=1)
+            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
+            if sd_cols:
+                df["player_pass_rush_reception_tds_sd"] = np.sqrt(
+                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
+                )
+
+    if created:
+        logging.info("Normalized projection columns for markets: %s", ", ".join(sorted(created)))
+ main
 
 
 def load_projections(path: str) -> pd.DataFrame:

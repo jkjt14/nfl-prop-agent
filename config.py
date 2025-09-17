@@ -92,13 +92,20 @@ def load_config(path: str = "agent_config.yaml") -> Dict[str, Any]:
         "bankroll": raw.get("bankroll", 1000.0),
         "unit_pct": raw.get("unit_pct", 0.01),
         # Staking bands appear as "ev_bands" or "stake_bands".
+ codex/conduct-code-review-for-model-results-xb1agb
         "stake_bands": stake_bands,
+
+        "stake_bands": raw.get("ev_bands", raw.get("stake_bands", [])),
+ main
         "odds_levels": raw.get("odds_levels", [-120, -110, 100]),
         "max_juice": raw.get("max_juice"),
         "top_n": raw.get("top_n", 0),
         "odds_format": raw.get("odds_format", "american"),
+ codex/conduct-code-review-for-model-results-xb1agb
         "days_from": raw.get("days_from", 7),
         "max_calls": raw.get("max_calls", 1000),
         "slack_webhook_url": slack_webhook,
+
+ main
     }
 
