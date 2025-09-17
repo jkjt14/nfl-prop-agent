@@ -32,6 +32,7 @@ jobs:
       - name: Run agent
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          PROJECTIONS_PATH: ${{ inputs.projections_path }} # may be empty to auto-pick
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}  # optional, for alerts.py
           ENABLE_ALERTS: "1"        # set "0" to disable alerts
           ALERT_MIN_EV: "0.06"      # 6% EV threshold
