@@ -250,13 +250,26 @@ def _player_name_match(desc: str, player_norm: str) -> bool:
     dt = dn.split()
     if not pt:
         return False
-    last_ok = pt[-1] in dt
+    last = pt[-1]
+    # Odds API sometimes collapses names like "B.Robinson" into a single token
+    # without spaces.  Accept tokens that contain the last name instead of
+    # requiring an exact token match so those entries still qualify.
+    last_ok = any(last == t or last in t or t in last for t in dt)
+    if not last_ok and last:
+        dn_compact = dn.replace(" ", "")
+        last_ok = last in dn_compact
     if len(pt) >= 2:
         first = pt[0]
         initials = {t[0] for t in dt if t}
         first_ok = (first in dt) or (first and first[0] in initials)
+        if not first_ok and first:
+            # Handle collapsed variants like "jallen".
+            combo = (first[0] + last) if last else ""
+            if combo and combo in dn.replace(" ", ""):
+                first_ok = True
         return last_ok and first_ok
-    return pt[0] in dt
+    target = pt[0]
+    return any(target == t or target in t or t in target for t in dt)
 
 def best_offer_for_player(
     event_json: dict, player_name: str, market_key: str, side: str, target_books: set
