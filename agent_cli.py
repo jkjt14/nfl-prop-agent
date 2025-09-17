@@ -6,17 +6,14 @@ posts Slack alerts.  Configuration is pulled from ``agent_config.yaml`` via
 """
 
 from __future__ import annotations
-
-import logging
-import os
-import sys
-
+import logging, os, sys
 import numpy as np
 import pandas as pd
 
 from agent_core import scan_edges
 from alerts import alert_edges
 from config import load_config
+from cleaning import clean_projections 
 
 
 STAT_TO_MARKET = {
@@ -79,35 +76,20 @@ def _ensure_market_columns(df: pd.DataFrame) -> None:
 
 
 def load_projections(path: str) -> pd.DataFrame:
-    """Load projection CSV into a DataFrame, normalizing column names."""
+    """Load projection CSV, clean it and normalize columns for markets."""
+    # Fallback to canonical raw path if PROJECTIONS_PATH is missing
     if not os.path.exists(path):
         alt = "data/raw_stats_current.csv"
         if os.path.exists(alt):
             path = alt
     if not os.path.exists(path):
         raise FileNotFoundError(f"Projections CSV not found at {path}.")
+
     df = pd.read_csv(path)
-    for c in ("player", "team", "pos"):
-        if c not in df.columns:
-            altcandidates = [c.title(), c.upper()]
-            if c == "pos":
-                altcandidates.extend(["Position", "position"])
-            else:
-                altcandidates.append(c)
-            for altc in altcandidates:
-                if altc in df.columns:
-                    df.rename(columns={altc: c}, inplace=True)
-                    break
-    if "pos" not in df.columns:
-        logging.error(
-            "Missing required 'pos' column after normalization. Available columns: %s",
-            ", ".join(sorted(df.columns)),
-        )
-        raise KeyError("Projections CSV missing 'pos' column after normalization.")
-    _ensure_market_columns(df)
-    logging.info(
-        "Loaded projections: %s rows, %s cols from %s", len(df), len(df.columns), path
-    )
+    df = clean_projections(df)
+
+    logging.info("Loaded/cleaned projections: %s rows, %s cols from %s",
+                 len(df), len(df.columns), path)
     return df
 
 
