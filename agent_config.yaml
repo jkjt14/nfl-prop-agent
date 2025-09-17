@@ -1,72 +1,66 @@
-# === NFL Prop Agent Config ===
-odds_api_key: "${ODDS_API_KEY}"   # set env var ODDS_API_KEY
+# Modified NFL Prop Agent Config (Week 3 based)
+odds_api_key: "${ODDS_API_KEY}"
 sport_key: "americanfootball_nfl"
 regions: "us"
 odds_format: "american"
 
-# Massachusetts books (DraftKings excluded per your request)
+# Target books remain the same as the original config; adjust as needed
 target_books:
   - fanduel
   - espnbet
   - betmgm
   - caesars
   - fanatics
-  - ballybet   # optional; comment out if not supported for a market
+  - ballybet
 
-# Player-prop markets to evaluate (NFL) — “all” common markets
-# (See: https://the-odds-api.com/sports-odds-data/betting-markets.html#player-props-api-markets )
+# Restrict to the six core markets – yards and touchdowns for passing, rushing and receiving
 markets:
   - player_pass_yds
-  - player_pass_attempts
-  - player_pass_completions
-  - player_pass_interceptions
-  - player_pass_longest_completion
   - player_pass_tds
   - player_rush_yds
-  - player_rush_attempts
-  - player_rush_longest
   - player_rush_tds
   - player_reception_yds
-  - player_receptions
-  - player_reception_longest
   - player_reception_tds
-  - player_pass_rush_reception_yds   # combo
-  - player_pass_rush_reception_tds   # combo
 
-# Odds levels at which to compute EV snapshots
+# Odds levels for EV snapshots (unchanged)
 odds_levels: [-120, -110, 100]
 
-# Modeling: blended variance — combine *_sd in your CSV (if present) with outcome_sigma
-# sd_effective = sqrt( alpha*src_sd^2 + (1-alpha)*sigma_pos_market^2 )
+# Variance blending coefficient
 blend_alpha: 0.35
 
-# Outcome sigma defaults (if *_sd missing). Tweak freely.
+# Outcome sigma defaults – updated using Week 3 stats
 outcome_sigma:
-  WR:
-    player_receptions: 2.0
-    player_reception_yds: 30.0
-    player_rush_yds: 20.0
-  TE:
-    player_receptions: 1.6
-    player_reception_yds: 22.0
-  RB:
-    player_receptions: 1.2
-    player_reception_yds: 18.0
-    player_rush_yds: 22.0
   QB:
-    player_pass_yds: 60.0
-    player_pass_tds: 0.9
+    player_pass_yds: 33.0
+    player_pass_tds: 0.36
+    player_rush_yds: 4.6
+    player_rush_tds: 0.07
+  RB:
+    player_rush_yds: 4.5
+    player_rush_tds: 0.03
+    player_reception_yds: 1.8
+    player_reception_tds: 0.01
+  TE:
+    player_rush_yds: 0.02
+    player_rush_tds: 0.001
+    player_reception_yds: 6.7
+    player_reception_tds: 0.06
+  WR:
+    player_rush_yds: 0.94
+    player_rush_tds: 0.01
+    player_reception_yds: 9.1
+    player_reception_tds: 0.08
 
-# Bankroll & staking (bands)
+# Bankroll and staking parameters (unchanged)
 bankroll: 1000.0
-unit_pct: 0.01    # 1.0u = 1% of bankroll ($10 on $1,000)
+unit_pct: 0.01
 ev_bands:
   - {min_ev: 0.08, stake_u: 1.0}
   - {min_ev: 0.04, stake_u: 0.5}
   - {min_ev: 0.02, stake_u: 0.3}
 
-# Juice threshold for qualification ("playable")
-max_juice: -115
+# Juice threshold raised to allow lines as high as –140
+max_juice: -140
 
-# Output size
+# Return top 25 edges by default
 top_n: 25
