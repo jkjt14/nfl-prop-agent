@@ -70,3 +70,8 @@ max_juice: -115
 
 # Output size
 top_n: 25
+
+# Slack alerts (optional)
+slack:
+  webhook_url: "${SLACK_WEBHOOK_URL}"  # leave blank or remove section to disable
+

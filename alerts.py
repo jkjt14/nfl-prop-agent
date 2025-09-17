@@ -3,7 +3,8 @@
 import json
 import logging
 import os
-from typing import Optional
+import time
+from typing import List, Optional
 
 import requests
 import pandas as pd
@@ -22,11 +23,18 @@ def _market_readable(mkey: str) -> str:
         "player_pass_tds": "pass TDs",
         "player_rush_tds": "rush TDs",
         "player_reception_tds": "rec TDs",
-        "player_interceptions": "interceptions",
+        "player_interceptions": "def INTs",
+        "player_pass_interceptions": "pass INTs",
         "player_pass_completions": "pass completions",
         "player_pass_attempts": "pass attempts",
+        "player_pass_longest_completion": "longest completion",
         "player_longest_reception": "longest reception",
+        "player_reception_longest": "longest reception",
         "player_longest_rush": "longest rush",
+        "player_rush_longest": "longest rush",
+        "player_rush_attempts": "rush attempts",
+        "player_pass_rush_reception_yds": "pass+rush+rec yards",
+        "player_pass_rush_reception_tds": "pass+rush+rec TDs",
     }
     return m.get(mkey, mkey.replace("_", " "))
 
@@ -44,20 +52,39 @@ def format_advice(df: pd.DataFrame, threshold: float) -> str:
         )
     return "\n".join(lines[:25]) if lines else "No edges ≥ threshold."
 
+def _resolve_webhook(candidate: Optional[str]) -> str:
+    """Return the preferred Slack webhook URL from config/env fallbacks."""
+
+    if candidate and candidate.strip():
+        return candidate.strip()
+    # Prefer the new SLACK_WEBHOOK_URL variable but fall back to the legacy name
+    # for backwards compatibility.
+    env_hook = (
+        os.environ.get("SLACK_WEBHOOK_URL")
+        or os.environ.get("SLACK_WEBHOOK")
+        or ""
+    )
+    return env_hook.strip()
+
+
 def alert_edges(
     df: pd.DataFrame, threshold_ev: float = 0.06, webhook: Optional[str] = None
 ) -> None:
     """Post formatted edges to Slack or write a failure artifact."""
     os.makedirs("artifacts", exist_ok=True)
-    webhook = webhook or os.environ.get("SLACK_WEBHOOK", "")
+    webhook = _resolve_webhook(webhook)
     msg = "*NFL Edges*\n" + format_advice(df, threshold_ev)
     if not webhook:
         with open("artifacts/slack_failed.txt", "w", encoding="utf-8") as f:
-            f.write("No SLACK_WEBHOOK set\n" + msg)
-        logging.warning("[SLACK] Webhook not set; wrote artifacts/slack_failed.txt")
+            f.write("No SLACK_WEBHOOK_URL configured.\n\n")
+            f.write(msg)
+        logging.warning(
+            "[SLACK] Webhook not set via config or SLACK_WEBHOOK_URL; wrote artifacts/slack_failed.txt"
+        )
         return
 
     payload = json.dumps({"text": msg})
+    errors: List[str] = []
     for attempt in range(3):
         try:
             resp = requests.post(
@@ -69,14 +96,21 @@ def alert_edges(
             if resp.status_code < 400:
                 logging.info("[SLACK] Posted advice.")
                 return
-            logging.error("[SLACK] HTTP %s", resp.status_code)
+            body = (resp.text or "").strip()
+            detail = f"HTTP {resp.status_code}"
+            if body:
+                detail += f": {body}"
+            errors.append(detail)
+            logging.error("[SLACK] %s", detail)
         except Exception as e:  # pragma: no cover - network errors
+            err_detail = f"Exception: {e}"
+            errors.append(err_detail)
             logging.exception("[SLACK] Exception posting to webhook: %s", e)
         if attempt < 2:
-            import time
-
             time.sleep(2 * (attempt + 1))
 
     with open("artifacts/slack_failed.txt", "w", encoding="utf-8") as f:
+        if errors:
+            f.write("\n".join(errors) + "\n\n")
         f.write(msg)
     logging.error("[SLACK] Failed after retries; wrote artifacts/slack_failed.txt")

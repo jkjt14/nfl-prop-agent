@@ -11,11 +11,71 @@ import logging
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 
 from agent_core import scan_edges
 from alerts import alert_edges
 from config import load_config
+
+
+STAT_TO_MARKET = {
+    "pass_yds": "player_pass_yds",
+    "pass_tds": "player_pass_tds",
+    "pass_int": "player_pass_interceptions",
+    "pass_attempts": "player_pass_attempts",
+    "pass_att": "player_pass_attempts",
+    "pass_comp": "player_pass_completions",
+    "pass_completions": "player_pass_completions",
+    "rush_yds": "player_rush_yds",
+    "rush_tds": "player_rush_tds",
+    "rush_att": "player_rush_attempts",
+    "rush_attempts": "player_rush_attempts",
+    "rec": "player_receptions",
+    "receptions": "player_receptions",
+    "rec_yds": "player_reception_yds",
+    "rec_tds": "player_reception_tds",
+    "pass_rush_rec_yds": "player_pass_rush_reception_yds",
+    "pass_rush_rec_tds": "player_pass_rush_reception_tds",
+}
+
+
+def _ensure_market_columns(df: pd.DataFrame) -> None:
+    """Backfill ``player_*`` market columns from common projection aliases."""
+
+    created = []
+    for alias, market in STAT_TO_MARKET.items():
+        if market not in df.columns and alias in df.columns:
+            df[market] = df[alias]
+            created.append(market)
+        sd_alias = f"{alias}_sd"
+        sd_market = f"{market}_sd"
+        if sd_market not in df.columns and sd_alias in df.columns:
+            df[sd_market] = df[sd_alias]
+
+    # Combo helpers – these are additive stats that appear under multiple names.
+    if "player_pass_rush_reception_yds" not in df.columns:
+        comps = [c for c in ("pass_yds", "rush_yds", "rec_yds") if c in df.columns]
+        if len(comps) == 3:
+            df["player_pass_rush_reception_yds"] = df[comps].fillna(0).sum(axis=1)
+            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
+            if sd_cols:
+                df["player_pass_rush_reception_yds_sd"] = np.sqrt(
+                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
+                )
+
+    if "player_pass_rush_reception_tds" not in df.columns:
+        comps = [c for c in ("pass_tds", "rush_tds", "rec_tds") if c in df.columns]
+        if len(comps) == 3:
+            df["player_pass_rush_reception_tds"] = df[comps].fillna(0).sum(axis=1)
+            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
+            if sd_cols:
+                df["player_pass_rush_reception_tds_sd"] = np.sqrt(
+                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
+                )
+
+    if created:
+        logging.info("Normalized projection columns for markets: %s", ", ".join(sorted(created)))
 
 
 def load_projections(path: str) -> pd.DataFrame:
@@ -33,6 +93,7 @@ def load_projections(path: str) -> pd.DataFrame:
                 if altc in df.columns:
                     df.rename(columns={altc: c}, inplace=True)
                     break
+    _ensure_market_columns(df)
     logging.info(
         "Loaded projections: %s rows, %s cols from %s", len(df), len(df.columns), path
     )
@@ -49,13 +110,20 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
         "player_reception_yds": "receiving yards",
         "player_receptions": "receptions",
         "player_pass_tds": "pass TDs",
+        "player_pass_longest_completion": "longest completion",
+        "player_pass_rush_reception_yds": "pass+rush+rec yards",
+        "player_pass_rush_reception_tds": "pass+rush+rec TDs",
         "player_rush_tds": "rush TDs",
+        "player_rush_attempts": "rush attempts",
         "player_reception_tds": "rec TDs",
-        "player_interceptions": "interceptions",
+        "player_interceptions": "def INTs",
+        "player_pass_interceptions": "pass INTs",
         "player_pass_completions": "pass completions",
         "player_pass_attempts": "pass attempts",
         "player_longest_reception": "longest reception",
+        "player_reception_longest": "longest reception",
         "player_longest_rush": "longest rush",
+        "player_rush_longest": "longest rush",
     }
     keep = df[df["ev_per_unit"] >= threshold].copy()
     if keep.empty:
@@ -104,7 +172,8 @@ def main() -> int:
 
     logging.info("\n=== ADVICE ===\n%s\n", adv)
 
-    alert_edges(df_edges, threshold_ev=threshold)
+    slack_webhook = cfg.get("slack_webhook_url")
+    alert_edges(df_edges, threshold_ev=threshold, webhook=slack_webhook)
     return 0
 
 
