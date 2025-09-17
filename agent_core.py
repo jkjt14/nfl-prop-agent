@@ -336,17 +336,46 @@ def scan_edges(
     """
     regions_env = os.environ.get("REGIONS", "").strip()
     regions = regions_env if regions_env else cfg.get("regions", "us,us2")
-    target_books = set(cfg.get("target_books", []))
+    target_books = {bk for bk in cfg.get("target_books", []) if bk}
     sigma_defaults = cfg.get("sigma_defaults", {})
     alpha = float(cfg.get("blend_alpha", 0.35))
-    markets_list = cfg.get("markets", {}).get(profile, cfg.get("markets", {}).get("base", []))
+    markets_cfg = cfg.get("markets", {}) or {}
+    profile_markets = markets_cfg.get(profile)
+    if profile_markets is None:
+        profile_markets = markets_cfg.get("base", [])
+    markets_list = list(profile_markets or [])
     bankroll = float(cfg.get("bankroll", 1000.0))
     unit_pct = float(cfg.get("unit_pct", 0.01))
+codex/conduct-code-review-for-model-results-xb1agb
+    stake_bands_raw = cfg.get("stake_bands")
+    if not stake_bands_raw:
+        stake_bands = [
+            {"min_ev": 0.08, "stake_u": 1.0},
+            {"min_ev": 0.04, "stake_u": 0.5},
+            {"min_ev": 0.02, "stake_u": 0.3},
+        ]
+    else:
+        stake_bands = []
+        for band in stake_bands_raw:
+            try:
+                min_ev = float(band.get("min_ev"))
+                stake_u = float(band.get("stake_u"))
+            except Exception:
+                continue
+            stake_bands.append({"min_ev": min_ev, "stake_u": stake_u})
+        if not stake_bands:
+            stake_bands = [
+                {"min_ev": 0.08, "stake_u": 1.0},
+                {"min_ev": 0.04, "stake_u": 0.5},
+                {"min_ev": 0.02, "stake_u": 0.3},
+            ]
+
     stake_bands = cfg.get("stake_bands", [
         {"min_ev": 0.08, "stake_u": 1.0},
         {"min_ev": 0.04, "stake_u": 0.5},
         {"min_ev": 0.02, "stake_u": 0.3},
     ])
+ main
     odds_levels_cfg = cfg.get("odds_levels", [-120, -110, 100])
     odds_levels: List[int] = []
     for lvl in (odds_levels_cfg or []):
@@ -376,7 +405,11 @@ def scan_edges(
     diag = {
         "regions": regions,
         "profile": profile,
+codex/conduct-code-review-for-model-results-xb1agb
+        "markets_requested": list(markets_list),
+
         "markets_requested": markets_list,
+ main
         "odds_levels": odds_levels,
         "max_juice": max_juice,
         "projections_cols": list(projections.columns),
@@ -400,7 +433,7 @@ def scan_edges(
         keep = max(1, max_calls // num_events)
         markets_list = markets_list[:keep]
         logging.info(f"[BUDGET] trimmed markets to {len(markets_list)}")
-        diag["markets_trimmed"] = markets_list
+        diag["markets_trimmed_to"] = list(markets_list)
 
     event_map = {e["id"]: e for e in (events or [])}
 
@@ -533,7 +566,14 @@ def scan_edges(
         json.dump(diag, f, indent=2)
     with open("artifacts/scan_summary.txt", "w", encoding="utf-8") as f:
         f.write(f"events={diag['events']} used={diag['events_used']}\n")
+ codex/conduct-code-review-for-model-results-xb1agb
+        f.write(f"markets_requested={diag['markets_requested']}\n")
+        f.write(f"markets_used={markets_list}\n")
+        if "markets_trimmed_to" in diag:
+            f.write(f"markets_trimmed_to={diag['markets_trimmed_to']}\n")
+
         f.write(f"markets={markets_list}\n")
+ main
         f.write(f"odds_levels={odds_levels}\n")
         f.write(f"max_juice={max_juice}\n")
         if top_n and top_n > 0:
