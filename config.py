@@ -47,5 +47,9 @@ def load_config(path: str = "agent_config.yaml") -> Dict[str, Any]:
         "unit_pct": raw.get("unit_pct", 0.01),
         # Staking bands appear as "ev_bands" or "stake_bands".
         "stake_bands": raw.get("ev_bands", raw.get("stake_bands", [])),
+        "odds_levels": raw.get("odds_levels", [-120, -110, 100]),
+        "max_juice": raw.get("max_juice"),
+        "top_n": raw.get("top_n", 0),
+        "odds_format": raw.get("odds_format", "american"),
     }
 
