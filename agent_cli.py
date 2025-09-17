@@ -89,10 +89,21 @@ def load_projections(path: str) -> pd.DataFrame:
     df = pd.read_csv(path)
     for c in ("player", "team", "pos"):
         if c not in df.columns:
-            for altc in [c.title(), c.upper(), "Position" if c == "pos" else c]:
+            altcandidates = [c.title(), c.upper()]
+            if c == "pos":
+                altcandidates.extend(["Position", "position"])
+            else:
+                altcandidates.append(c)
+            for altc in altcandidates:
                 if altc in df.columns:
                     df.rename(columns={altc: c}, inplace=True)
                     break
+    if "pos" not in df.columns:
+        logging.error(
+            "Missing required 'pos' column after normalization. Available columns: %s",
+            ", ".join(sorted(df.columns)),
+        )
+        raise KeyError("Projections CSV missing 'pos' column after normalization.")
     _ensure_market_columns(df)
     logging.info(
         "Loaded projections: %s rows, %s cols from %s", len(df), len(df.columns), path
