@@ -136,9 +136,75 @@ def normalize_name(n: str) -> str:
     return n
 
 DISCRETE_KEYS = {
-    "player_receptions", "player_pass_tds", "player_rush_tds", "player_reception_tds",
-    "player_pass_attempts", "player_pass_completions", "player_interceptions"
+    "player_receptions",
+    "player_pass_tds",
+    "player_rush_tds",
+    "player_reception_tds",
+    "player_pass_attempts",
+    "player_pass_completions",
+    "player_interceptions",
+    "player_pass_interceptions",
+    "player_rush_attempts",
+    "player_pass_rush_reception_tds",
 }
+
+TEAM_ALIASES = {
+    "ARIZONACARDINALS": ["ARI", "ARIZONA", "ARIZONA CARDINALS"],
+    "ATLANTAFALCONS": ["ATL", "ATLANTA", "ATLANTA FALCONS"],
+    "BALTIMORERAVENS": ["BAL", "BALTIMORE", "BALTIMORE RAVENS"],
+    "BUFFALOBILLS": ["BUF", "BUFFALO", "BUFFALO BILLS"],
+    "CAROLINAPANTHERS": ["CAR", "CAROLINA", "CAROLINA PANTHERS"],
+    "CHICAGOBEARS": ["CHI", "CHICAGO", "CHICAGO BEARS"],
+    "CINCINNATIBENGALS": ["CIN", "CINCINNATI", "CINCINNATI BENGALS"],
+    "CLEVELANDBROWNS": ["CLE", "CLEVELAND", "CLEVELAND BROWNS"],
+    "DALLASCOWBOYS": ["DAL", "DALLAS", "DALLAS COWBOYS"],
+    "DENVERBRONCOS": ["DEN", "DENVER", "DENVER BRONCOS"],
+    "DETROITLIONS": ["DET", "DETROIT", "DETROIT LIONS"],
+    "GREENBAYPACKERS": ["GB", "GBP", "GB PACKERS", "GREEN BAY", "GREEN BAY PACKERS"],
+    "HOUSTONTEXANS": ["HOU", "HOUSTON", "HOUSTON TEXANS"],
+    "INDIANAPOLISCOLTS": ["IND", "INDIANAPOLIS", "INDIANAPOLIS COLTS"],
+    "JACKSONVILLEJAGUARS": ["JAX", "JAC", "JACKSONVILLE", "JACKSONVILLE JAGUARS"],
+    "KANSASCITYCHIEFS": ["KC", "KAN", "KANSAS CITY", "KANSAS CITY CHIEFS"],
+    "LASVEGASRAIDERS": ["LV", "LVR", "LAS VEGAS", "LAS VEGAS RAIDERS"],
+    "LOSANGELESRAMS": ["LAR", "LA RAMS", "LOS ANGELES", "LOS ANGELES RAMS"],
+    "LOSANGELESCHARGERS": ["LAC", "LA CHARGERS", "LOS ANGELES CHARGERS"],
+    "MIAMIDOLPHINS": ["MIA", "MIAMI", "MIAMI DOLPHINS"],
+    "MINNESOTAVIKINGS": ["MIN", "MINNESOTA", "MINNESOTA VIKINGS"],
+    "NEWENGLANDPATRIOTS": ["NE", "NENG", "NEW ENGLAND", "NEW ENGLAND PATRIOTS"],
+    "NEWORLEANSSAINTS": ["NO", "NOR", "NEW ORLEANS", "NEW ORLEANS SAINTS"],
+    "NEWYORKGIANTS": ["NYG", "N.Y.G", "NEW YORK GIANTS", "NY GIANTS"],
+    "NEWYORKJETS": ["NYJ", "N.Y.J", "NEW YORK JETS", "NY JETS"],
+    "PHILADELPHIAEAGLES": ["PHI", "PHILADELPHIA", "PHILADELPHIA EAGLES"],
+    "PITTSBURGHSTEELERS": ["PIT", "PITTSBURGH", "PITTSBURGH STEELERS"],
+    "SANFRANCISCO49ERS": ["SF", "SFO", "SAN FRANCISCO", "SAN FRANCISCO 49ERS", "49ERS"],
+    "SEATTLESEAHAWKS": ["SEA", "SEATTLE", "SEATTLE SEAHAWKS"],
+    "TAMPABAYBUCCANEERS": ["TB", "TAMPA", "TAMPA BAY", "TAMPA BAY BUCCANEERS"],
+    "TENNESSEETITANS": ["TEN", "TENNESSEE", "TENNESSEE TITANS"],
+    "WASHINGTONCOMMANDERS": [
+        "WAS",
+        "WSH",
+        "WASHINGTON",
+        "WASHINGTON COMMANDERS",
+        "WASHINGTON FOOTBALL TEAM",
+    ],
+}
+
+def _clean_team_token(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (name or "").upper())
+
+
+TEAM_CANONICAL_MAP = {}
+for canonical, aliases in TEAM_ALIASES.items():
+    TEAM_CANONICAL_MAP[_clean_team_token(canonical)] = canonical
+    for alias in aliases:
+        TEAM_CANONICAL_MAP[_clean_team_token(alias)] = canonical
+
+
+def canonical_team(name: str) -> str:
+    token = _clean_team_token(name)
+    if not token:
+        return ""
+    return TEAM_CANONICAL_MAP.get(token, token)
 
 def is_discrete_market(market_key: str) -> bool:
     """Whether ``market_key`` represents a discrete outcome."""
@@ -279,12 +345,38 @@ def scan_edges(
         {"min_ev": 0.04, "stake_u": 0.5},
         {"min_ev": 0.02, "stake_u": 0.3},
     ])
+    odds_levels_cfg = cfg.get("odds_levels", [-120, -110, 100])
+    odds_levels: List[int] = []
+    for lvl in (odds_levels_cfg or []):
+        try:
+            odds_levels.append(int(float(lvl)))
+        except Exception:
+            continue
+    if not odds_levels:
+        odds_levels = [-120, -110, 100]
+    max_juice = cfg.get("max_juice")
+    if max_juice is not None and str(max_juice).strip() != "":
+        try:
+            max_juice = int(float(max_juice))
+        except Exception:
+            logging.warning("Invalid max_juice value %s; ignoring", max_juice)
+            max_juice = None
+    else:
+        max_juice = None
+    top_n = cfg.get("top_n")
+    try:
+        top_n = int(top_n)
+    except Exception:
+        top_n = 0
+    odds_format = cfg.get("odds_format", "american")
 
     # Diagnostics
     diag = {
         "regions": regions,
         "profile": profile,
         "markets_requested": markets_list,
+        "odds_levels": odds_levels,
+        "max_juice": max_juice,
         "projections_cols": list(projections.columns),
         "players_in_projections": int(len(projections)),
         "team_filter_disabled": (os.environ.get("NO_TEAM_FILTER", "0") == "1"),
@@ -315,21 +407,34 @@ def scan_edges(
         if not markets_list:
             break
         markets_csv = ",".join(markets_list)
-        ev_json = get_event_odds(api_key, event_id, regions=regions, odds_format="american", markets=markets_csv)
+        ev_json = get_event_odds(
+            api_key,
+            event_id,
+            regions=regions,
+            odds_format=odds_format,
+            markets=markets_csv,
+        )
 
         if not ev_json or not ev_json.get("bookmakers"):
             bump("no_bookmakers_for_event")
             continue
         diag["events_used"] += 1
 
-        home = (ev.get("home_team") or "").upper()
-        away = (ev.get("away_team") or "").upper()
+        home_raw = ev.get("home_team") or ""
+        away_raw = ev.get("away_team") or ""
+        home = home_raw.upper()
+        away = away_raw.upper()
+        home_canon = canonical_team(home_raw)
+        away_canon = canonical_team(away_raw)
 
         use_all = os.environ.get("NO_TEAM_FILTER", "0") == "1"
 
         def team_matches(t: str) -> bool:
             if not t:
                 return False
+            canon = canonical_team(t)
+            if canon and (canon == home_canon or canon == away_canon):
+                return True
             T = (t or "").upper()
             return (home in T) or (away in T) or (T in home) or (T in away)
 
@@ -370,10 +475,15 @@ def scan_edges(
                     if side == "UNDER":
                         win_prob = 1 - win_prob
                     ev_now = ev_per_unit(win_prob, book_odds)
-                    ev_m120 = ev_per_unit(win_prob, -120)
-                    ev_m110 = ev_per_unit(win_prob, -110)
-                    ev_p100 = ev_per_unit(win_prob, 100)
-                    playable = "YES" if ev_per_unit(win_prob, -115) > 0 else "NO"
+                    if max_juice is not None and book_odds < max_juice:
+                        bump(f"price_exceeds_max_juice::{mkey}")
+                        continue
+
+                    extra_evs = {
+                        f"ev@{lvl}": round(ev_per_unit(win_prob, lvl), 4)
+                        for lvl in odds_levels
+                    }
+                    playable = "YES" if ev_now > 0 else "NO"
 
                     unit_size = bankroll * unit_pct
                     stake_u = 0.0
@@ -382,7 +492,7 @@ def scan_edges(
                             stake_u = band["stake_u"]; break
                     stake_dollars = round(unit_size * stake_u, 2)
 
-                    rows.append({
+                    row = {
                         "player": player,
                         "team": r.get("team"),
                         "pos": (r.get("pos") or r.get("position")),
@@ -395,21 +505,22 @@ def scan_edges(
                         "book_odds": int(book_odds),
                         "win_prob": round(win_prob, 4),
                         "ev_per_unit": round(ev_now, 4),
-                        "playable@-115": playable,
-                        "ev@-120": round(ev_m120, 4),
-                        "ev@-110": round(ev_m110, 4),
-                        "ev@100": round(ev_p100, 4),
+                        "playable": playable,
                         "stake_u": stake_u,
                         "stake_$": stake_dollars,
                         "event_id": event_id,
                         "home_team": home,
-                        "away_team": away
-                    })
+                        "away_team": away,
+                    }
+                    row.update(extra_evs)
+                    rows.append(row)
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df.sort_values(["ev_per_unit", "win_prob"], ascending=[False, False], inplace=True, kind="mergesort")
         df.reset_index(drop=True, inplace=True)
+        if top_n and top_n > 0:
+            df = df.head(top_n).copy()
 
     # Write diagnostics
     os.makedirs("artifacts", exist_ok=True)
@@ -418,6 +529,10 @@ def scan_edges(
     with open("artifacts/scan_summary.txt", "w", encoding="utf-8") as f:
         f.write(f"events={diag['events']} used={diag['events_used']}\n")
         f.write(f"markets={markets_list}\n")
+        f.write(f"odds_levels={odds_levels}\n")
+        f.write(f"max_juice={max_juice}\n")
+        if top_n and top_n > 0:
+            f.write(f"top_n={top_n}\n")
         f.write(f"players={diag['players_in_projections']}\n")
         f.write("reasons:\n")
         for k, v in sorted(diag["reasons"].items(), key=lambda kv: (-kv[1], kv[0])):

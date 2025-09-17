@@ -22,11 +22,18 @@ def _market_readable(mkey: str) -> str:
         "player_pass_tds": "pass TDs",
         "player_rush_tds": "rush TDs",
         "player_reception_tds": "rec TDs",
-        "player_interceptions": "interceptions",
+        "player_interceptions": "def INTs",
+        "player_pass_interceptions": "pass INTs",
         "player_pass_completions": "pass completions",
         "player_pass_attempts": "pass attempts",
+        "player_pass_longest_completion": "longest completion",
         "player_longest_reception": "longest reception",
+        "player_reception_longest": "longest reception",
         "player_longest_rush": "longest rush",
+        "player_rush_longest": "longest rush",
+        "player_rush_attempts": "rush attempts",
+        "player_pass_rush_reception_yds": "pass+rush+rec yards",
+        "player_pass_rush_reception_tds": "pass+rush+rec TDs",
     }
     return m.get(mkey, mkey.replace("_", " "))
 
