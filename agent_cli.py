@@ -114,7 +114,6 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
         "player_rush_yds": "rushing yards",
         "player_reception_yds": "receiving yards",
         "player_receptions": "receptions",
-        "player_pass_yds": "passing yards",
         "player_pass_tds": "pass TDs",
         "player_pass_longest_completion": "longest completion",
         "player_pass_rush_yds": "pass+rush yards",
