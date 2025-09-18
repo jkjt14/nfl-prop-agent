@@ -114,6 +114,7 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
         "player_rush_yds": "rushing yards",
         "player_reception_yds": "receiving yards",
         "player_receptions": "receptions",
+        "player_pass_yds": "passing yards",
         "player_pass_tds": "pass TDs",
         "player_pass_longest_completion": "longest completion",
         "player_pass_rush_yds": "pass+rush yards",
@@ -165,11 +166,21 @@ def main() -> int:
     df_proj = load_projections(proj_path)
     cfg = load_config()
 
+    # Determine how far ahead to look for events.  Default to 2 days, but allow
+    # override via the DAYS_FROM environment variable.  In practice, player
+    # prop lines are often posted only a couple of days before kickoff, so
+    # limiting the lookahead period reduces "no_bookmakers" events.
+    days_from_env = os.environ.get("DAYS_FROM", "2").strip()
+    try:
+        days_from = int(days_from_env)
+    except Exception:
+        days_from = 2
+
     df_edges = scan_edges(
         df_proj,
         cfg,
         api_key=api_key,
-        days_from=7,
+        days_from=days_from,
         profile=profile,
         max_calls=1000,
     )
