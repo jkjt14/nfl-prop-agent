@@ -1,12 +1,18 @@
 """Command line interface for the NFL prop agent.
 
-Loads projection data, runs the edge scanner, writes artifacts, and optionally
-posts Slack alerts.  Configuration is pulled from ``agent_config.yaml`` via
-``config.load_config`` to keep settings consistent with other entry points.
+This CLI loads projection data, runs the edge scanner, writes artifacts,
+and optionally posts Slack alerts.  Configuration is pulled from
+``agent_config.yaml`` via ``config.load_config`` to keep settings
+consistent across entry points.  It also normalizes projection column
+names and computes derived statistics (such as pass+rush yards) so
+that the scanning logic can operate on a consistent set of markets.
 """
 
 from __future__ import annotations
-import logging, os, sys
+
+import logging
+import os
+import sys
 import numpy as np
 import pandas as pd
 
@@ -16,6 +22,12 @@ from config import load_config
 from cleaning import clean_projections
 from file_finder import resolve_projection_path  # NEW
 
+# Mapping of projection stat aliases to Odds API market keys.
+#
+# This map serves two purposes: it allows the CLI to accept projection
+# files with a variety of column names, and it defines the set of markets
+# for which combo columns may be computed.  When adding new markets to
+# your config, also add their aliases here.
 STAT_TO_MARKET = {
     "pass_yds": "player_pass_yds",
     "pass_tds": "player_pass_tds",
@@ -32,15 +44,21 @@ STAT_TO_MARKET = {
     "receptions": "player_receptions",
     "rec_yds": "player_reception_yds",
     "rec_tds": "player_reception_tds",
+    "pass_rush_yds": "player_pass_rush_yds",
     "pass_rush_rec_yds": "player_pass_rush_reception_yds",
     "pass_rush_rec_tds": "player_pass_rush_reception_tds",
 }
 
-
 def _ensure_market_columns(df: pd.DataFrame) -> None:
-    """Backfill ``player_*`` market columns from common projection aliases."""
+    """Backfill ``player_*`` market columns from common projection aliases.
 
-    created = []
+    This function modifies ``df`` in-place.  It normalizes all alias
+    columns defined in ``STAT_TO_MARKET``, creates corresponding ``player_*``
+    columns where necessary, and computes combined stat columns when
+    constituent columns exist.  A log message lists any markets that
+    were created via alias mapping.
+    """
+    created: list[str] = []
     for alias, market in STAT_TO_MARKET.items():
         if market not in df.columns and alias in df.columns:
             df[market] = df[alias]
@@ -50,7 +68,7 @@ def _ensure_market_columns(df: pd.DataFrame) -> None:
         if sd_market not in df.columns and sd_alias in df.columns:
             df[sd_market] = df[sd_alias]
 
-    # Combo helpers – these are additive stats that appear under multiple names.
+    # Compute pass+rush+rec yards combo if not already present
     if "player_pass_rush_reception_yds" not in df.columns:
         comps = [c for c in ("pass_yds", "rush_yds", "rec_yds") if c in df.columns]
         if len(comps) == 3:
@@ -61,28 +79,31 @@ def _ensure_market_columns(df: pd.DataFrame) -> None:
                     df[sd_cols].pow(2).fillna(0).sum(axis=1)
                 )
 
-    if "player_pass_rush_reception_tds" not in df.columns:
-        comps = [c for c in ("pass_tds", "rush_tds", "rec_tds") if c in df.columns]
-        if len(comps) == 3:
-            df["player_pass_rush_reception_tds"] = df[comps].fillna(0).sum(axis=1)
+    # Compute pass+rush yards combo if not already present
+    if "player_pass_rush_yds" not in df.columns:
+        comps = [c for c in ("pass_yds", "rush_yds") if c in df.columns]
+        if len(comps) == 2:
+            df["player_pass_rush_yds"] = df[comps].fillna(0).sum(axis=1)
             sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
             if sd_cols:
-                df["player_pass_rush_reception_tds_sd"] = np.sqrt(
+                df["player_pass_rush_yds_sd"] = np.sqrt(
                     df[sd_cols].pow(2).fillna(0).sum(axis=1)
                 )
 
     if created:
         logging.info("Normalized projection columns for markets: %s", ", ".join(sorted(created)))
 
-
 def load_projections(path: str) -> pd.DataFrame:
     """Load projection CSV, clean it and normalize columns for markets."""
     df = pd.read_csv(path)
     df = clean_projections(df)
-    logging.info("Loaded/cleaned projections: %s rows, %s cols from %s",
-                 len(df), len(df.columns), path)
+    logging.info(
+        "Loaded/cleaned projections: %s rows, %s cols from %s",
+        len(df),
+        len(df.columns),
+        path,
+    )
     return df
-
 
 def advice_lines(df: pd.DataFrame, threshold: float) -> str:
     """Format human-readable advice lines for Slack/console."""
@@ -93,8 +114,10 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
         "player_rush_yds": "rushing yards",
         "player_reception_yds": "receiving yards",
         "player_receptions": "receptions",
+        "player_pass_yds": "passing yards",
         "player_pass_tds": "pass TDs",
         "player_pass_longest_completion": "longest completion",
+        "player_pass_rush_yds": "pass+rush yards",
         "player_pass_rush_reception_yds": "pass+rush+rec yards",
         "player_pass_rush_reception_tds": "pass+rush+rec TDs",
         "player_rush_tds": "rush TDs",
@@ -120,7 +143,6 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
             f"{r['book_odds']} ({r['best_book']}) | EV {evp} | {r['stake_u']}u"
         )
     return "\n".join(lines)
-
 
 def main() -> int:
     logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
@@ -165,7 +187,5 @@ def main() -> int:
     alert_edges(df_edges, threshold_ev=threshold)
     return 0
 
-
 if __name__ == "__main__":
     sys.exit(main())
-
