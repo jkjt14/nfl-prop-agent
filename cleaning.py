@@ -24,6 +24,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from market_utils import MARKET_KEY_ALIASES
+
 # Positions to keep – these are the offensive skill positions for which
 # player prop markets are typically offered.  Defensive positions and
 # special teams are removed early in the cleaning process.
@@ -58,26 +60,26 @@ _DROP_COLS = [
 # cleaning step to backfill the normalized ``player_*`` columns from
 # whichever naming convention your projections provider uses.
 _MARKET_MAP = {
-    "pass_yds": "player_pass_yds",
-    "pass_tds": "player_pass_tds",
+    "pass_yds": "player_pass_yards",
+    "pass_tds": "player_pass_touchdowns",
     "pass_int": "player_pass_interceptions",
     "pass_attempts": "player_pass_attempts",
     "pass_att": "player_pass_attempts",
     "pass_comp": "player_pass_completions",
     "pass_completions": "player_pass_completions",
-    "rush_yds": "player_rush_yds",
-    "rush_tds": "player_rush_tds",
+    "rush_yds": "player_rush_yards",
+    "rush_tds": "player_rush_touchdowns",
     "rush_att": "player_rush_attempts",
     "rush_attempts": "player_rush_attempts",
     "rec": "player_receptions",
     "receptions": "player_receptions",
-    "rec_yds": "player_reception_yds",
-    "rec_tds": "player_reception_tds",
+    "rec_yds": "player_receiving_yards",
+    "rec_tds": "player_receiving_touchdowns",
     # Alias for combined pass+rush yards.  Some projection files may
     # include a "pass_rush_yds" column; if so, map it to the player
     # prop identifier.  Even when this column is absent, we compute
     # the combination below.
-    "pass_rush_yds": "player_pass_rush_yds",
+    "pass_rush_yds": "player_pass_rush_yards",
     # Projection providers sometimes include pass+rush+rec combos directly.
     "pass_rush_rec_yds": "player_pass_rush_reception_yds",
     "pass_rush_rec_tds": "player_pass_rush_reception_tds",
@@ -186,29 +188,49 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     # Coerce numeric for markets and *_sd variants
     df = _coerce_numeric(df)
 
+    # Ensure both canonical Odds API names and historical aliases exist so
+    # downstream code can resolve either form.
+    df = _ensure_market_aliases(df)
+
     # ------------------------------------------------------------------
     # Compute combination stats
     # ------------------------------------------------------------------
     # player_pass_rush_yds: sum of pass and rush yards
-    if "player_pass_rush_yds" not in df.columns:
-        comps = [c for c in ["player_pass_yds", "player_rush_yds"] if c in df.columns]
+    if "player_pass_rush_yards" not in df.columns:
+        comps = [c for c in ["player_pass_yards", "player_rush_yards"] if c in df.columns]
         if comps:
-            df["player_pass_rush_yds"] = df[comps].sum(axis=1, min_count=1)
+            df["player_pass_rush_yards"] = df[comps].sum(axis=1, min_count=1)
     # Standard deviation for pass+rush yards: root-sum-of-squares
-    if "player_pass_rush_yds_sd" not in df.columns:
-        sd_components = [c for c in ["player_pass_yds_sd", "player_rush_yds_sd"] if c in df.columns]
+    if "player_pass_rush_yards_sd" not in df.columns:
+        sd_components = [
+            c
+            for c in ["player_pass_yards_sd", "player_rush_yards_sd"]
+            if c in df.columns
+        ]
         if sd_components:
             sum_squares = df[sd_components].pow(2).sum(axis=1, min_count=1)
-            df["player_pass_rush_yds_sd"] = np.sqrt(sum_squares)
+            df["player_pass_rush_yards_sd"] = np.sqrt(sum_squares)
 
     # player_pass_rush_reception_yds: sum of pass, rush and reception yards
     if "player_pass_rush_reception_yds" not in df.columns:
-        comps = [c for c in ["player_pass_yds", "player_rush_yds", "player_reception_yds"] if c in df.columns]
+        comps = [
+            c
+            for c in ["player_pass_yards", "player_rush_yards", "player_receiving_yards"]
+            if c in df.columns
+        ]
         if comps:
             df["player_pass_rush_reception_yds"] = df[comps].sum(axis=1, min_count=1)
     # Standard deviation for pass+rush+rec yards
     if "player_pass_rush_reception_yds_sd" not in df.columns:
-        sd_comps = [c for c in ["player_pass_yds_sd", "player_rush_yds_sd", "player_reception_yds_sd"] if c in df.columns]
+        sd_comps = [
+            c
+            for c in [
+                "player_pass_yards_sd",
+                "player_rush_yards_sd",
+                "player_receiving_yards_sd",
+            ]
+            if c in df.columns
+        ]
         if sd_comps:
             sum_squares = df[sd_comps].pow(2).sum(axis=1, min_count=1)
             df["player_pass_rush_reception_yds_sd"] = np.sqrt(sum_squares)
@@ -225,10 +247,10 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     if "player_pass_rush_reception_tds_sd" not in df.columns:
         sd_tds = [
             c
-            for c in [
-                "player_pass_tds_sd",
-                "player_rush_tds_sd",
-                "player_reception_tds_sd",
+        for c in [
+                "player_pass_touchdowns_sd",
+                "player_rush_touchdowns_sd",
+                "player_receiving_touchdowns_sd",
             ]
             if c in df.columns
         ]
@@ -245,7 +267,7 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     keep_markets = [c for c in _MARKET_MAP.values() if c in df.columns]
     # Also include any combo markets we've created
     for combo_col in [
-        "player_pass_rush_yds",
+        "player_pass_rush_yards",
         "player_pass_rush_reception_yds",
         "player_pass_rush_reception_tds",
     ]:
@@ -272,3 +294,24 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
         df = df.dropna(axis=0, subset=keep_markets, how="all")
 
     return df.reset_index(drop=True)
+def _ensure_market_aliases(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure alias and canonical market columns both exist when possible."""
+
+    for alias, canonical in MARKET_KEY_ALIASES.items():
+        alias_present = alias in df.columns
+        canonical_present = canonical in df.columns
+        if canonical_present and not alias_present:
+            df[alias] = df[canonical]
+        elif alias_present and not canonical_present:
+            df[canonical] = df[alias]
+
+        alias_sd = f"{alias}_sd"
+        canonical_sd = f"{canonical}_sd"
+        alias_sd_present = alias_sd in df.columns
+        canonical_sd_present = canonical_sd in df.columns
+        if canonical_sd_present and not alias_sd_present:
+            df[alias_sd] = df[canonical_sd]
+        elif alias_sd_present and not canonical_sd_present:
+            df[canonical_sd] = df[alias_sd]
+    return df
+

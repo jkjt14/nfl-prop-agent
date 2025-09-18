@@ -7,6 +7,12 @@ import requests
 import pandas as pd
 import numpy as np
 
+from market_utils import (
+    canonical_market_key,
+    iter_market_synonyms,
+    resolve_market_column,
+)
+
 NFL_SPORT_KEY = "americanfootball_nfl"
 USER_AGENT = "nfl-prop-agent/1.0"
 CALL_LOG_PATH = os.environ.get("ODDS_API_CALL_LOG", "odds_api_calls.csv")
@@ -143,7 +149,7 @@ def normalize_name(n: str) -> str:
     n = re.sub(r"\s+", " ", n)
     return n
 
-DISCRETE_KEYS = {
+_DISCRETE_BASE = {
     "player_receptions",
     "player_pass_tds",
     "player_rush_tds",
@@ -154,7 +160,14 @@ DISCRETE_KEYS = {
     "player_pass_interceptions",
     "player_rush_attempts",
     "player_pass_rush_reception_tds",
+    "player_pass_touchdowns",
+    "player_rush_touchdowns",
+    "player_receiving_touchdowns",
 }
+
+DISCRETE_KEYS = set()
+for _key in _DISCRETE_BASE:
+    DISCRETE_KEYS.update(iter_market_synonyms(_key))
 
 TEAM_ALIASES = {
     "ARIZONACARDINALS": ["ARI", "ARIZONA", "ARIZONA CARDINALS"],
@@ -216,7 +229,7 @@ def canonical_team(name: str) -> str:
 
 def is_discrete_market(market_key: str) -> bool:
     """Whether ``market_key`` represents a discrete outcome."""
-    return market_key in DISCRETE_KEYS
+    return any(key in DISCRETE_KEYS for key in iter_market_synonyms(market_key))
 
 def sanity_line_ok(market_key: str, line: float) -> bool:
     """Quick sanity check that a book's line is non-negative."""
@@ -229,19 +242,46 @@ def sanity_line_ok(market_key: str, line: float) -> bool:
 
 # -------------------- Variance blending --------------------
 def make_variance_blend(
-    row: pd.Series, market_key: str, sigma_cfg: dict, alpha: float
+    row: pd.Series,
+    market_key: str,
+    sigma_cfg: dict,
+    alpha: float,
+    projection_key: Optional[str] = None,
 ) -> float:
     """Blend player-specific and positional variance estimates."""
     pos = str(row.get("pos") or row.get("position") or "").upper()
     src_sd = None
-    for cand in [f"{market_key}_sd", market_key.replace("player_", "") + "_sd"]:
+    candidates = []
+    for cand in iter_market_synonyms(market_key):
+        candidates.append(f"{cand}_sd")
+        if cand.startswith("player_"):
+            candidates.append(cand.replace("player_", "") + "_sd")
+    if projection_key:
+        candidates.insert(0, f"{projection_key}_sd")
+        if projection_key.startswith("player_"):
+            candidates.insert(1, projection_key.replace("player_", "") + "_sd")
+    seen = set()
+    for cand in candidates:
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
         if cand in row and pd.notna(row[cand]):
             try:
                 src_sd = float(row[cand])
                 break
             except Exception:
                 pass
-    base_sigma = float(sigma_cfg.get(pos, {}).get(market_key, 25.0))
+    base_sigma = None
+    pos_cfg = sigma_cfg.get(pos, {}) if isinstance(sigma_cfg, dict) else {}
+    for cand in iter_market_synonyms(market_key):
+        if cand in pos_cfg:
+            try:
+                base_sigma = float(pos_cfg[cand])
+                break
+            except Exception:
+                continue
+    if base_sigma is None:
+        base_sigma = 25.0
     if src_sd is None:
         return base_sigma
     return math.sqrt(alpha * (src_sd**2) + (1 - alpha) * (base_sigma**2))
@@ -295,6 +335,8 @@ def best_offer_for_player(
     """
     player_norm = normalize_name(player_name)
 
+    market_keys = set(iter_market_synonyms(market_key))
+
     def _search(allowed_books: Optional[set]) -> Optional[Tuple[str, float, int]]:
         best_local: Optional[Tuple[str, float, int]] = None
         for bm in (event_json or {}).get("bookmakers", []) or []:
@@ -302,7 +344,7 @@ def best_offer_for_player(
             if allowed_books is not None and allowed_books and bk not in allowed_books:
                 continue
             for mk in bm.get("markets", []) or []:
-                if mk.get("key") != market_key:
+                if mk.get("key") not in market_keys:
                     continue
                 for outc in mk.get("outcomes", []) or []:
                     pstr = next(
@@ -392,6 +434,14 @@ def scan_edges(
     sigma_defaults = cfg.get("sigma_defaults", {})
     alpha = float(cfg.get("blend_alpha", 0.35))
     markets_list = cfg.get("markets", {}).get(profile, cfg.get("markets", {}).get("base", []))
+    markets_list = list(markets_list or [])
+    canonical_markets: List[str] = []
+    seen_canonical = set()
+    for key in markets_list:
+        canon = canonical_market_key(key)
+        if canon not in seen_canonical:
+            seen_canonical.add(canon)
+            canonical_markets.append(canon)
     bankroll = float(cfg.get("bankroll", 1000.0))
     unit_pct = float(cfg.get("unit_pct", 0.01))
     stake_bands = cfg.get("stake_bands", [
@@ -429,6 +479,7 @@ def scan_edges(
         "regions": regions,
         "profile": profile,
         "markets_requested": markets_list,
+        "markets_api": canonical_markets,
         "odds_levels": odds_levels,
         "max_juice": max_juice,
         "projections_cols": list(projections.columns),
@@ -450,25 +501,33 @@ def scan_edges(
     events = list_upcoming_events(api_key, days_from=days_from)
     num_events = len(events or [])
     diag["events"] = num_events
-    est = estimate_credits(num_events, markets_list, regions=regions)
+    est = estimate_credits(num_events, canonical_markets, regions=regions)
     diag["estimated_credits"] = int(est)
     logging.info(f"[BUDGET] events={num_events}; markets={len(markets_list)}; estimated_credits≈{est}")
 
     if est > max_calls and num_events > 0:
         logging.warning(f"[BUDGET] est {est} > max_calls {max_calls}. Trimming markets.")
         keep = max(1, max_calls // num_events)
-        markets_list = markets_list[:keep]
-        logging.info(f"[BUDGET] trimmed markets to {len(markets_list)}")
-        diag["markets_trimmed"] = markets_list
+        canonical_markets = canonical_markets[:keep]
+        keep_set = set(canonical_markets)
+        markets_list = [m for m in markets_list if canonical_market_key(m) in keep_set]
+        logging.info(f"[BUDGET] trimmed markets to {len(canonical_markets)}")
+        diag["markets_trimmed"] = canonical_markets
+        diag["markets_api"] = canonical_markets
+
+    market_column_map = {
+        mkey: resolve_market_column(projections.columns, mkey) for mkey in markets_list
+    }
+    diag["market_columns"] = market_column_map
 
     event_map = {e["id"]: e for e in (events or [])}
     bookmakers_seen = set()
 
     rows = []
     for event_id, ev in event_map.items():
-        if not markets_list:
+        if not markets_list or not canonical_markets:
             break
-        markets_csv = ",".join(markets_list)
+        markets_csv = ",".join(canonical_markets)
         home_raw = ev.get("home_team") or ""
         away_raw = ev.get("away_team") or ""
         home = home_raw.upper()
@@ -533,18 +592,22 @@ def scan_edges(
                 bump("missing_player_name")
                 continue
             for mkey in markets_list:
-                if mkey not in r:
+                proj_col = market_column_map.get(mkey)
+                if not proj_col:
+                    bump(f"missing_market_col::{mkey}")
+                    continue
+                if proj_col not in r:
                     bump(f"missing_market_col::{mkey}")
                     continue
                 try:
-                    mu = float(r[mkey])
+                    mu = float(r[proj_col])
                 except Exception:
                     bump(f"bad_projection_value::{mkey}")
                     continue
-                if pd.isna(r[mkey]):
+                if pd.isna(r[proj_col]):
                     bump(f"missing_projection_value::{mkey}")
                     continue
-                sd = make_variance_blend(r, mkey, sigma_defaults, alpha)
+                sd = make_variance_blend(r, mkey, sigma_defaults, alpha, projection_key=proj_col)
                 for side in ("OVER", "UNDER"):
                     offer, fallback_offer = best_offer_for_player(
                         ev_json,
@@ -645,6 +708,7 @@ def scan_edges(
 
     diag["bookmakers_encountered"] = sorted(bookmakers_seen)
     diag["markets_effective"] = list(markets_list)
+    diag["markets_api_effective"] = list(canonical_markets)
 
     # Write diagnostics
     os.makedirs("artifacts", exist_ok=True)
@@ -656,6 +720,7 @@ def scan_edges(
         if est is not None:
             f.write(f"estimated_credits≈{est}\n")
         f.write(f"markets={markets_list}\n")
+        f.write(f"markets_api={canonical_markets}\n")
         f.write(f"odds_levels={odds_levels}\n")
         f.write(f"max_juice={max_juice}\n")
         if diag.get("target_books") is not None:
