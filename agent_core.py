@@ -16,6 +16,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s"
 )
 
+logger = logging.getLogger(__name__)
+
 # -------------------- Odds & probability helpers --------------------
 def american_to_implied_p(odds: int) -> float:
     """Convert American odds to an implied win probability."""
@@ -50,11 +52,17 @@ def kelly_fraction(p: float, american_odds: int) -> float:
     return max(0.0, (b * p - q) / b)
 
 # -------------------- HTTP + usage logging --------------------
+_SESSION: Optional[requests.Session] = None
+
+
 def _requests_session() -> requests.Session:
-    """Return a ``requests.Session`` with our user agent set."""
-    s = requests.Session()
-    s.headers.update({"User-Agent": USER_AGENT})
-    return s
+    """Return a cached ``requests.Session`` with our user agent set."""
+    global _SESSION
+    if _SESSION is None:
+        s = requests.Session()
+        s.headers.update({"User-Agent": USER_AGENT})
+        _SESSION = s
+    return _SESSION
 
 def _log_usage(resp: requests.Response, tag: str = "") -> None:
     """Persist Odds API usage headers for later inspection."""
@@ -327,8 +335,16 @@ def best_offer_for_player(
         return best_local
 
     best = _search(target_books if target_books else None)
-    if best is None and target_books:
-        best = _search(None)
+    if best is None:
+        if target_books:
+            logger.info(
+                "No offer found for %s %s/%s at target books %s",
+                player_name,
+                market_key,
+                side,
+                sorted(target_books),
+            )
+        return None
     return best
 
 # -------------------- Main scan --------------------
