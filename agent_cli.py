@@ -20,6 +20,7 @@ from alerts import alert_edges
 from config import load_config, validate_target_books
 from cleaning import clean_projections
 from file_finder import resolve_projection_path  # NEW
+from market_utils import resolve_market_column
 
 def load_projections(path: str) -> pd.DataFrame:
     """Load projection CSV, clean it and normalize columns for markets."""
@@ -41,14 +42,16 @@ def projection_health_summary(df: pd.DataFrame, markets: list[str]) -> list[dict
         return summary
     for market in markets:
         entry = {"market": market, "total": total}
-        if market not in df.columns:
+        col = resolve_market_column(df.columns, market)
+        if not col:
             entry["status"] = "missing_column"
         else:
-            missing = int(df[market].isna().sum())
+            missing = int(df[col].isna().sum())
             entry.update({
                 "status": "ok",
                 "missing": missing,
                 "available": total - missing,
+                "column": col,
             })
         summary.append(entry)
     return summary
@@ -67,8 +70,10 @@ def format_projection_health(summary: list[dict]) -> list[str]:
             available = entry.get("available", 0)
             missing = entry.get("missing", 0)
             pct = (available / total * 100) if total else 0.0
+            column = entry.get("column", market)
+            suffix = f" (column {column})" if column and column != market else ""
             lines.append(
-                f"{market}: {available}/{total} projections ({pct:.1f}% coverage, missing {missing})"
+                f"{market}{suffix}: {available}/{total} projections ({pct:.1f}% coverage, missing {missing})"
             )
     return lines
 
@@ -131,18 +136,24 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
         return "No edges found."
     name_map = {
         "player_pass_yds": "passing yards",
+        "player_pass_yards": "passing yards",
         "player_rush_yds": "rushing yards",
+        "player_rush_yards": "rushing yards",
         "player_reception_yds": "receiving yards",
+        "player_receiving_yards": "receiving yards",
         "player_receptions": "receptions",
         "player_pass_yds": "passing yards",
         "player_pass_tds": "pass TDs",
+        "player_pass_touchdowns": "pass TDs",
         "player_pass_longest_completion": "longest completion",
         "player_pass_rush_yds": "pass+rush yards",
         "player_pass_rush_reception_yds": "pass+rush+rec yards",
         "player_pass_rush_reception_tds": "pass+rush+rec TDs",
         "player_rush_tds": "rush TDs",
+        "player_rush_touchdowns": "rush TDs",
         "player_rush_attempts": "rush attempts",
         "player_reception_tds": "rec TDs",
+        "player_receiving_touchdowns": "rec TDs",
         "player_interceptions": "def INTs",
         "player_pass_interceptions": "pass INTs",
         "player_pass_completions": "pass completions",

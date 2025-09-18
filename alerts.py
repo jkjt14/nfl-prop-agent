@@ -16,12 +16,18 @@ def _market_readable(mkey: str) -> str:
     """Return a human-friendly name for ``mkey``."""
     m = {
         "player_pass_yds": "passing yards",
+        "player_pass_yards": "passing yards",
         "player_rush_yds": "rushing yards",
+        "player_rush_yards": "rushing yards",
         "player_reception_yds": "receiving yards",
+        "player_receiving_yards": "receiving yards",
         "player_receptions": "receptions",
         "player_pass_tds": "pass TDs",
+        "player_pass_touchdowns": "pass TDs",
         "player_rush_tds": "rush TDs",
+        "player_rush_touchdowns": "rush TDs",
         "player_reception_tds": "rec TDs",
+        "player_receiving_touchdowns": "rec TDs",
         "player_interceptions": "def INTs",
         "player_pass_interceptions": "pass INTs",
         "player_pass_completions": "pass completions",
