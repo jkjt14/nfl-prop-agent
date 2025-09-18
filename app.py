@@ -6,6 +6,7 @@ import streamlit as st
 from agent_core import scan_edges
 from config import load_config
 from cleaning import clean_projections  # NEW
+from diagnostics import format_no_edge_summary, format_scan_diagnostics
 
 CFG = load_config()
 
@@ -69,8 +70,17 @@ with st.spinner("Scanning for edges..."):
         st.error(f"Scan failed: {exc}")
         st.stop()
 
+diag: dict = {}
+if isinstance(edges, pd.DataFrame):
+    diag = edges.attrs.get("diagnostics", {}) or {}
+diag_lines = format_scan_diagnostics(diag, reason_limit=10)
+
 if edges is None or edges.empty:
-    st.warning("Scan completed but no qualifying edges were found.")
+    summary = format_no_edge_summary(diag, reason_limit=5, heading="Diagnostics:")
+    message = "Scan completed but no qualifying edges were found."
+    if summary:
+        message = message + "\n" + summary
+    st.warning(message)
 else:
     st.success(f"Found {len(edges)} edges. Showing top {min(len(edges), 50)}")
     st.dataframe(edges.head(50))
@@ -80,3 +90,7 @@ else:
         file_name="edges.csv",
         mime="text/csv",
     )
+
+if diag_lines:
+    with st.expander("Scan diagnostics", expanded=(edges is None or (isinstance(edges, pd.DataFrame) and edges.empty))):
+        st.text("\n".join(diag_lines))

@@ -8,6 +8,8 @@ from typing import Optional
 import requests
 import pandas as pd
 
+from diagnostics import format_no_edge_summary
+
 def _fmt_pct(x: float) -> str:
     """Format a probability/EV float as a percentage string."""
     return f"{x*100:.1f}%"
@@ -39,17 +41,37 @@ def _market_readable(mkey: str) -> str:
 
 def format_advice(df: pd.DataFrame, threshold: float) -> str:
     """Create a multi-line Slack message summarizing high-EV edges."""
-    if df is None or df.empty:
-        return "No edges found."
+    diag: dict = {}
+    if isinstance(df, pd.DataFrame):
+        diag = df.attrs.get("diagnostics", {}) or {}
+    if df is None or not isinstance(df, pd.DataFrame):
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="*Diagnostics:*")
+        return "No edges found." if not summary else "No edges found.\n" + summary
+    if df.empty:
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="*Diagnostics:*")
+        return "No edges found." if not summary else "No edges found.\n" + summary
     lines = []
     for _, r in df.iterrows():
         if r["ev_per_unit"] < threshold:
             continue
+        fallback_note = ""
+        fb_book = r.get("fallback_book")
+        if fb_book and isinstance(fb_book, str):
+            fb_line = r.get("fallback_line")
+            fb_odds = r.get("fallback_odds")
+            line_str = "NA"
+            if not pd.isna(fb_line):
+                line_str = f"{fb_line:g}" if isinstance(fb_line, (int, float)) else str(fb_line)
+            odds_str = "NA" if pd.isna(fb_odds) else str(int(fb_odds))
+            fallback_note = f" (alt: {fb_book} {odds_str} @ {line_str})"
         lines.append(
             f"{r['player']} {r['side']} {r['book_line']} {_market_readable(r['market_key'])} — "
-            f"{r['book_odds']} ({r['best_book']}) | EV {_fmt_pct(r['ev_per_unit'])} | {r['stake_u']}u"
+            f"{r['book_odds']} ({r['best_book']}) | EV {_fmt_pct(r['ev_per_unit'])} | {r['stake_u']}u{fallback_note}"
         )
-    return "\n".join(lines[:25]) if lines else "No edges ≥ threshold."
+    if not lines:
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="*Diagnostics:*")
+        return "No edges ≥ threshold." if not summary else "No edges ≥ threshold.\n" + summary
+    return "\n".join(lines[:25])
 
 def alert_edges(
     df: pd.DataFrame, threshold_ev: float = 0.06, webhook: Optional[str] = None
