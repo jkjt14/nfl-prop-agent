@@ -77,7 +77,11 @@ def main() -> int:
 
     # Prefer env var; else auto-pick latest raw_stats_YYYY_wkN.csv in data/
     pref = os.environ.get("PROJECTIONS_PATH", "").strip() or None
-    proj_path, year, week = resolve_projection_path(pref)
+    try:
+        proj_path, year, week = resolve_projection_path(pref)
+    except FileNotFoundError as exc:
+        logging.error("%s", exc)
+        return 1
     if year and week:
         logging.info("Using projections file for %d week %d: %s", year, week, proj_path)
     else:

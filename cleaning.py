@@ -187,40 +187,31 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     df = _coerce_numeric(df)
 
     # ------------------------------------------------------------------
-    # Fill missing values for market columns
-    #
-    # Many projection files leave non-applicable stats blank (e.g. pass yards
-    # for wide receivers).  To ensure these players are still evaluated when
-    # scanning edges, fill NaN values in each market column with zero.  Standard
-    # deviation columns are left untouched; ``make_variance_blend`` will fall
-    # back to positional defaults when no player-specific SD is available.
-    for market in _MARKET_MAP.values():
-        if market in df.columns:
-            df[market] = df[market].fillna(0)
-
-    # ------------------------------------------------------------------
     # Compute combination stats
     # ------------------------------------------------------------------
     # player_pass_rush_yds: sum of pass and rush yards
     if "player_pass_rush_yds" not in df.columns:
-        if "player_pass_yds" in df.columns or "player_rush_yds" in df.columns:
-            df["player_pass_rush_yds"] = df[[c for c in ["player_pass_yds", "player_rush_yds"] if c in df.columns]].fillna(0).sum(axis=1)
+        comps = [c for c in ["player_pass_yds", "player_rush_yds"] if c in df.columns]
+        if comps:
+            df["player_pass_rush_yds"] = df[comps].sum(axis=1, min_count=1)
     # Standard deviation for pass+rush yards: root-sum-of-squares
     if "player_pass_rush_yds_sd" not in df.columns:
         sd_components = [c for c in ["player_pass_yds_sd", "player_rush_yds_sd"] if c in df.columns]
         if sd_components:
-            df["player_pass_rush_yds_sd"] = np.sqrt(df[sd_components].pow(2).fillna(0).sum(axis=1))
+            sum_squares = df[sd_components].pow(2).sum(axis=1, min_count=1)
+            df["player_pass_rush_yds_sd"] = np.sqrt(sum_squares)
 
     # player_pass_rush_reception_yds: sum of pass, rush and reception yards
     if "player_pass_rush_reception_yds" not in df.columns:
         comps = [c for c in ["player_pass_yds", "player_rush_yds", "player_reception_yds"] if c in df.columns]
         if comps:
-            df["player_pass_rush_reception_yds"] = df[comps].fillna(0).sum(axis=1)
+            df["player_pass_rush_reception_yds"] = df[comps].sum(axis=1, min_count=1)
     # Standard deviation for pass+rush+rec yards
     if "player_pass_rush_reception_yds_sd" not in df.columns:
         sd_comps = [c for c in ["player_pass_yds_sd", "player_rush_yds_sd", "player_reception_yds_sd"] if c in df.columns]
         if sd_comps:
-            df["player_pass_rush_reception_yds_sd"] = np.sqrt(df[sd_comps].pow(2).fillna(0).sum(axis=1))
+            sum_squares = df[sd_comps].pow(2).sum(axis=1, min_count=1)
+            df["player_pass_rush_reception_yds_sd"] = np.sqrt(sum_squares)
 
     # player_pass_rush_reception_tds: sum of pass, rush and reception TDs
     if "player_pass_rush_reception_tds" not in df.columns:
@@ -230,7 +221,7 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
             if c in df.columns
         ]
         if comps_tds:
-            df["player_pass_rush_reception_tds"] = df[comps_tds].fillna(0).sum(axis=1)
+            df["player_pass_rush_reception_tds"] = df[comps_tds].sum(axis=1, min_count=1)
     if "player_pass_rush_reception_tds_sd" not in df.columns:
         sd_tds = [
             c
@@ -242,9 +233,8 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
             if c in df.columns
         ]
         if sd_tds:
-            df["player_pass_rush_reception_tds_sd"] = np.sqrt(
-                df[sd_tds].pow(2).fillna(0).sum(axis=1)
-            )
+            sum_squares = df[sd_tds].pow(2).sum(axis=1, min_count=1)
+            df["player_pass_rush_reception_tds_sd"] = np.sqrt(sum_squares)
 
     # ------------------------------------------------------------------
     # Keep only useful columns (don’t accidentally drop player/team/pos/id/week)

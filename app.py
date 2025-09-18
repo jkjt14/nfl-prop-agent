@@ -31,7 +31,11 @@ if uploaded is not None:
     st.success(f"Loaded & cleaned (uploaded): {len(df):,} rows, {len(df.columns)} cols")
 elif use_repo_latest:
     from file_finder import resolve_projection_path
-    proj_path, year, week = resolve_projection_path(None)
+    try:
+        proj_path, year, week = resolve_projection_path(None)
+    except FileNotFoundError as exc:
+        st.error(str(exc))
+        st.stop()
     raw = pd.read_csv(proj_path)
     df = clean_projections(raw)
     wk_txt = f" {year} wk{week}" if year and week else ""
