@@ -177,6 +177,18 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     df = _coerce_numeric(df)
 
     # ------------------------------------------------------------------
+    # Fill missing values for market columns
+    #
+    # Many projection files leave non-applicable stats blank (e.g. pass yards
+    # for wide receivers).  To ensure these players are still evaluated when
+    # scanning edges, fill NaN values in each market column with zero.  Standard
+    # deviation columns are left untouched; ``make_variance_blend`` will fall
+    # back to positional defaults when no player-specific SD is available.
+    for market in _MARKET_MAP.values():
+        if market in df.columns:
+            df[market] = df[market].fillna(0)
+
+    # ------------------------------------------------------------------
     # Compute combination stats
     # ------------------------------------------------------------------
     # player_pass_rush_yds: sum of pass and rush yards
