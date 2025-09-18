@@ -1,19 +1,37 @@
-# Modified NFL Prop Agent Config (Week 3 based)
+# Modified NFL Prop Agent Config (Updated for Massachusetts & Extended Markets)
+
+# Use multiple regions to ensure coverage of US and US2 bookmakers. Adding
+# `us2` allows bookmakers like ESPN Bet and Bally Bet to appear in odds. See
+# the Odds API documentation for region codes【150563287621877†L44-L69】.
+regions: "us,us2"
+
 odds_api_key: "${ODDS_API_KEY}"
+
 sport_key: "americanfootball_nfl"
-regions: "us"
+
 odds_format: "american"
 
-# Target books remain the same as the original config; adjust as needed
+# Target bookmakers limited to operators licensed in Massachusetts. According
+# to the Massachusetts Gaming Commission, the Commonwealth currently has seven
+# online sports wagering licensees: BetMGM, Caesars Sportsbook (William Hill
+# US), Fanatics Betting & Gaming, Penn Sports Interactive (ESPN Bet), Bally
+# Bet, DraftKings and FanDuel【997424387851567†L147-L167】. The keys here
+# correspond to the bookmaker identifiers used by The Odds API【150563287621877†L44-L69】.
 target_books:
   - fanduel
-  - espnbet
+  - draftkings
   - betmgm
-  - caesars
+  - williamhill_us  # Caesars Sportsbook
+  - espnbet          # Penn Sports Interactive/ESPN Bet
   - fanatics
   - ballybet
 
-# Restrict to the six core markets – yards and touchdowns for passing, rushing and receiving
+# Markets to request from The Odds API. In addition to the original six core
+# markets, the list now includes Receptions (player_receptions), Pass+Rush
+# yards (player_pass_rush_yds) and Pass+Rush+Reception yards
+# (player_pass_rush_reception_yds). These markets are documented under the
+# NFL player props section of the Odds API betting markets page【335084117215825†L200-L236】.
+# Feel free to add other markets from that list as needed (e.g. player_rush_attempts, player_sacks).
 markets:
   - player_pass_yds
   - player_pass_tds
@@ -21,6 +39,9 @@ markets:
   - player_rush_tds
   - player_reception_yds
   - player_reception_tds
+  - player_receptions
+  - player_pass_rush_yds
+  - player_pass_rush_reception_yds
 
 # Odds levels for EV snapshots (unchanged)
 odds_levels: [-120, -110, 100]
@@ -28,28 +49,42 @@ odds_levels: [-120, -110, 100]
 # Variance blending coefficient
 blend_alpha: 0.35
 
-# Outcome sigma defaults – updated using Week 3 stats
+# Outcome sigma defaults (updated to include new markets). These values are
+# rough estimates; adjust based on your projection data if more accurate
+# standard deviations are available.
 outcome_sigma:
   QB:
     player_pass_yds: 33.0
     player_pass_tds: 0.36
     player_rush_yds: 4.6
     player_rush_tds: 0.07
+    player_receptions: 1.0
+    player_pass_rush_yds: 35.0
+    player_pass_rush_reception_yds: 36.0
   RB:
     player_rush_yds: 4.5
     player_rush_tds: 0.03
     player_reception_yds: 1.8
     player_reception_tds: 0.01
+    player_receptions: 1.2
+    player_pass_rush_yds: 5.5
+    player_pass_rush_reception_yds: 6.5
   TE:
     player_rush_yds: 0.02
     player_rush_tds: 0.001
     player_reception_yds: 6.7
     player_reception_tds: 0.06
+    player_receptions: 0.8
+    player_pass_rush_yds: 6.8
+    player_pass_rush_reception_yds: 7.5
   WR:
     player_rush_yds: 0.94
     player_rush_tds: 0.01
     player_reception_yds: 9.1
     player_reception_tds: 0.08
+    player_receptions: 1.3
+    player_pass_rush_yds: 10.0
+    player_pass_rush_reception_yds: 11.0
 
 # Bankroll and staking parameters (unchanged)
 bankroll: 1000.0
