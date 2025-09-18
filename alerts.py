@@ -45,9 +45,19 @@ def format_advice(df: pd.DataFrame, threshold: float) -> str:
     for _, r in df.iterrows():
         if r["ev_per_unit"] < threshold:
             continue
+        fallback_note = ""
+        fb_book = r.get("fallback_book")
+        if fb_book and isinstance(fb_book, str):
+            fb_line = r.get("fallback_line")
+            fb_odds = r.get("fallback_odds")
+            line_str = "NA"
+            if not pd.isna(fb_line):
+                line_str = f"{fb_line:g}" if isinstance(fb_line, (int, float)) else str(fb_line)
+            odds_str = "NA" if pd.isna(fb_odds) else str(int(fb_odds))
+            fallback_note = f" (alt: {fb_book} {odds_str} @ {line_str})"
         lines.append(
             f"{r['player']} {r['side']} {r['book_line']} {_market_readable(r['market_key'])} — "
-            f"{r['book_odds']} ({r['best_book']}) | EV {_fmt_pct(r['ev_per_unit'])} | {r['stake_u']}u"
+            f"{r['book_odds']} ({r['best_book']}) | EV {_fmt_pct(r['ev_per_unit'])} | {r['stake_u']}u{fallback_note}"
         )
     return "\n".join(lines[:25]) if lines else "No edges ≥ threshold."
 

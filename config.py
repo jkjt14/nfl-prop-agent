@@ -9,9 +9,47 @@ same settings.  The structure returned by :func:`load_config` matches what
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from difflib import get_close_matches
+from typing import Any, Dict, Iterable, List
 
 import yaml
+
+KNOWN_BOOKMAKER_KEYS = {
+    "fanduel",
+    "draftkings",
+    "betmgm",
+    "williamhill_us",
+    "espnbet",
+    "fanatics",
+    "ballybet",
+    "betrivers",
+    "sugarhouse",
+    "unibet_us",
+    "betonlineag",
+    "bovada",
+    "betanysports",
+    "mybookieag",
+    "betparx",
+    "pointsbetus",
+    "superbook",
+    "wynnbet",
+    "lowvig",
+    "betus",
+    "betfred",
+    "pinnacle",
+    "matchbook",
+    "caesars",
+    "circasports",
+    "hardrock",
+    "playup",
+    "twinspires",
+    "barstool",
+    "ladbrokes_uk",
+    "unibet_eu",
+    "888sport",
+    "williamhill",
+    "coral",
+}
 
 
 def load_config(path: str = "agent_config.yaml") -> Dict[str, Any]:
@@ -74,4 +112,32 @@ def load_config(path: str = "agent_config.yaml") -> Dict[str, Any]:
         "top_n": raw.get("top_n", 0),
         "odds_format": raw.get("odds_format", "american"),
     }
+
+
+def validate_target_books(target_books: Iterable[str]) -> Dict[str, List[str]]:
+    """Return unknown target book keys and suggestion list.
+
+    Parameters
+    ----------
+    target_books:
+        Iterable of bookmaker keys configured for a scan.
+
+    Returns
+    -------
+    dict
+        Dictionary with ``unknown`` (sorted list of invalid keys) and a
+        ``suggestions`` mapping of each invalid key to close matches from the
+        Odds API bookmaker catalog.
+    """
+
+    unique_books = {str(b).strip() for b in target_books if str(b).strip()}
+    unknown = sorted(b for b in unique_books if b not in KNOWN_BOOKMAKER_KEYS)
+    suggestions: Dict[str, List[str]] = {}
+    if unknown:
+        catalog = sorted(KNOWN_BOOKMAKER_KEYS)
+        for book in unknown:
+            matches = get_close_matches(book, catalog, n=3, cutoff=0.6)
+            if matches:
+                suggestions[book] = matches
+    return {"unknown": unknown, "suggestions": suggestions}
 

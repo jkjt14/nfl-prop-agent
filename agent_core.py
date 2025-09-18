@@ -280,9 +280,19 @@ def _player_name_match(desc: str, player_norm: str) -> bool:
     return any(target == t or target in t or t in target for t in dt)
 
 def best_offer_for_player(
-    event_json: dict, player_name: str, market_key: str, side: str, target_books: set
+    event_json: dict,
+    player_name: str,
+    market_key: str,
+    side: str,
+    target_books: set,
+    include_fallback: bool = False,
 ):
-    """Find the best line/price for a player and market."""
+    """Find the best line/price for a player and market.
+
+    When ``include_fallback`` is ``True`` the return value is a tuple of
+    ``(best_target_offer, best_overall_offer)`` so callers can report the
+    strongest number available even if none of the target books post a price.
+    """
     player_norm = normalize_name(player_name)
 
     def _search(allowed_books: Optional[set]) -> Optional[Tuple[str, float, int]]:
@@ -334,18 +344,30 @@ def best_offer_for_player(
                                 best_local = cand
         return best_local
 
-    best = _search(target_books if target_books else None)
-    if best is None:
-        if target_books:
-            logger.info(
-                "No offer found for %s %s/%s at target books %s",
-                player_name,
-                market_key,
-                side,
-                sorted(target_books),
-            )
-        return None
-    return best
+    allowed = target_books if target_books else None
+    best = _search(allowed)
+    fallback: Optional[Tuple[str, float, int]] = None
+    if include_fallback:
+        if not target_books:
+            fallback = best
+        else:
+            fallback = _search(None)
+
+    if best is None and target_books:
+        logger.info(
+            "No offer found for %s %s/%s at target books %s",
+            player_name,
+            market_key,
+            side,
+            sorted(target_books),
+        )
+
+    if not include_fallback:
+        return best
+
+    if best is not None and fallback == best:
+        fallback = None
+    return best, fallback
 
 # -------------------- Main scan --------------------
 def scan_edges(
@@ -366,6 +388,7 @@ def scan_edges(
     regions_env = os.environ.get("REGIONS", "").strip()
     regions = regions_env if regions_env else cfg.get("regions", "us,us2")
     target_books = set(cfg.get("target_books", []))
+    target_books_list = sorted(target_books)
     sigma_defaults = cfg.get("sigma_defaults", {})
     alpha = float(cfg.get("blend_alpha", 0.35))
     markets_list = cfg.get("markets", {}).get(profile, cfg.get("markets", {}).get("base", []))
@@ -414,6 +437,12 @@ def scan_edges(
         "events": 0,
         "events_used": 0,
         "reasons": {},
+        "target_books": target_books_list,
+        "offers_by_book": {},
+        "fallback_counts": {},
+        "fallback_examples": [],
+        "events_missing_bookmakers": [],
+        "bookmakers_encountered": [],
     }
     def bump(reason: str):
         diag["reasons"][reason] = int(diag["reasons"].get(reason, 0)) + 1
@@ -422,6 +451,7 @@ def scan_edges(
     num_events = len(events or [])
     diag["events"] = num_events
     est = estimate_credits(num_events, markets_list, regions=regions)
+    diag["estimated_credits"] = int(est)
     logging.info(f"[BUDGET] events={num_events}; markets={len(markets_list)}; estimated_credits≈{est}")
 
     if est > max_calls and num_events > 0:
@@ -432,12 +462,19 @@ def scan_edges(
         diag["markets_trimmed"] = markets_list
 
     event_map = {e["id"]: e for e in (events or [])}
+    bookmakers_seen = set()
 
     rows = []
     for event_id, ev in event_map.items():
         if not markets_list:
             break
         markets_csv = ",".join(markets_list)
+        home_raw = ev.get("home_team") or ""
+        away_raw = ev.get("away_team") or ""
+        home = home_raw.upper()
+        away = away_raw.upper()
+        home_canon = canonical_team(home_raw)
+        away_canon = canonical_team(away_raw)
         ev_json = get_event_odds(
             api_key,
             event_id,
@@ -448,15 +485,24 @@ def scan_edges(
 
         if not ev_json or not ev_json.get("bookmakers"):
             bump("no_bookmakers_for_event")
+            events_missing = diag["events_missing_bookmakers"]
+            if len(events_missing) < 20:
+                events_missing.append(
+                    {
+                        "event_id": event_id,
+                        "home_team": home_raw,
+                        "away_team": away_raw,
+                    }
+                )
             continue
         diag["events_used"] += 1
 
-        home_raw = ev.get("home_team") or ""
-        away_raw = ev.get("away_team") or ""
-        home = home_raw.upper()
-        away = away_raw.upper()
-        home_canon = canonical_team(home_raw)
-        away_canon = canonical_team(away_raw)
+        event_books = {
+            bm.get("key")
+            for bm in (ev_json or {}).get("bookmakers", []) or []
+            if bm.get("key")
+        }
+        bookmakers_seen.update(event_books)
 
         use_all = os.environ.get("NO_TEAM_FILTER", "0") == "1"
 
@@ -500,11 +546,36 @@ def scan_edges(
                     continue
                 sd = make_variance_blend(r, mkey, sigma_defaults, alpha)
                 for side in ("OVER", "UNDER"):
-                    offer = best_offer_for_player(ev_json, player, mkey, side, target_books)
+                    offer, fallback_offer = best_offer_for_player(
+                        ev_json,
+                        player,
+                        mkey,
+                        side,
+                        target_books,
+                        include_fallback=True,
+                    )
                     if not offer:
                         bump(f"no_offer::{mkey}::{side}")
+                        if fallback_offer:
+                            fb_book, fb_line, fb_odds = fallback_offer
+                            counts = diag["fallback_counts"]
+                            counts[fb_book] = int(counts.get(fb_book, 0)) + 1
+                            examples = diag["fallback_examples"]
+                            if len(examples) < 20:
+                                examples.append(
+                                    {
+                                        "player": player,
+                                        "market": mkey,
+                                        "side": side,
+                                        "book": fb_book,
+                                        "line": float(fb_line),
+                                        "odds": int(fb_odds),
+                                    }
+                                )
                         continue
                     best_book, book_line, book_odds = offer
+                    offers_by_book = diag["offers_by_book"]
+                    offers_by_book[best_book] = int(offers_by_book.get(best_book, 0)) + 1
                     win_prob = prob_over(book_line, mu, sd, is_discrete=is_discrete_market(mkey))
                     if side == "UNDER":
                         win_prob = 1 - win_prob
@@ -526,6 +597,19 @@ def scan_edges(
                             stake_u = band["stake_u"]; break
                     stake_dollars = round(unit_size * stake_u, 2)
 
+                    fallback_book = fallback_line = fallback_odds = None
+                    if fallback_offer:
+                        fb_book, fb_line, fb_odds = fallback_offer
+                        fallback_book = fb_book
+                        try:
+                            fallback_line = float(fb_line)
+                        except Exception:
+                            fallback_line = None
+                        try:
+                            fallback_odds = int(fb_odds)
+                        except Exception:
+                            fallback_odds = None
+
                     row = {
                         "player": player,
                         "team": r.get("team"),
@@ -542,6 +626,9 @@ def scan_edges(
                         "playable": playable,
                         "stake_u": stake_u,
                         "stake_$": stake_dollars,
+                        "fallback_book": fallback_book,
+                        "fallback_line": fallback_line,
+                        "fallback_odds": fallback_odds,
                         "event_id": event_id,
                         "home_team": home,
                         "away_team": away,
@@ -556,18 +643,68 @@ def scan_edges(
         if top_n and top_n > 0:
             df = df.head(top_n).copy()
 
+    diag["bookmakers_encountered"] = sorted(bookmakers_seen)
+    diag["markets_effective"] = list(markets_list)
+
     # Write diagnostics
     os.makedirs("artifacts", exist_ok=True)
     with open("artifacts/scan_debug.json", "w", encoding="utf-8") as f:
         json.dump(diag, f, indent=2)
     with open("artifacts/scan_summary.txt", "w", encoding="utf-8") as f:
         f.write(f"events={diag['events']} used={diag['events_used']}\n")
+        est = diag.get("estimated_credits")
+        if est is not None:
+            f.write(f"estimated_credits≈{est}\n")
         f.write(f"markets={markets_list}\n")
         f.write(f"odds_levels={odds_levels}\n")
         f.write(f"max_juice={max_juice}\n")
+        if diag.get("target_books") is not None:
+            f.write(f"target_books={diag.get('target_books')}\n")
         if top_n and top_n > 0:
             f.write(f"top_n={top_n}\n")
         f.write(f"players={diag['players_in_projections']}\n")
+        seen = diag.get("bookmakers_encountered") or []
+        if seen:
+            f.write("bookmakers_seen:\n")
+            for book in seen:
+                f.write(f"  - {book}\n")
+        offers_by_book = diag.get("offers_by_book") or {}
+        if offers_by_book:
+            f.write("offers_by_book:\n")
+            for book, count in sorted(offers_by_book.items(), key=lambda kv: (-kv[1], kv[0])):
+                f.write(f"  {book}: {count}\n")
+        fallback_counts = diag.get("fallback_counts") or {}
+        if fallback_counts:
+            f.write("fallback_offers_available:\n")
+            for book, count in sorted(fallback_counts.items(), key=lambda kv: (-kv[1], kv[0])):
+                f.write(f"  {book}: {count}\n")
+            examples = diag.get("fallback_examples") or []
+            if examples:
+                f.write("fallback_examples:\n")
+                for ex in examples[:10]:
+                    line = ex.get("line")
+                    odds = ex.get("odds")
+                    f.write(
+                        "  {player} {side} {market} -> {book} {line} @ {odds}\n".format(
+                            player=ex.get("player"),
+                            side=ex.get("side"),
+                            market=ex.get("market"),
+                            book=ex.get("book"),
+                            line="NA" if line is None else line,
+                            odds="NA" if odds is None else odds,
+                        )
+                    )
+        missing_events = diag.get("events_missing_bookmakers") or []
+        if missing_events:
+            f.write("events_missing_bookmakers:\n")
+            for ev in missing_events:
+                f.write(
+                    "  {event_id}: {away} @ {home}\n".format(
+                        event_id=ev.get("event_id"),
+                        away=ev.get("away_team", ""),
+                        home=ev.get("home_team", ""),
+                    )
+                )
         f.write("reasons:\n")
         for k, v in sorted(diag["reasons"].items(), key=lambda kv: (-kv[1], kv[0])):
             f.write(f"  {k}: {v}\n")
@@ -577,8 +714,10 @@ def scan_edges(
             if reason.startswith("missing_projection_value::")
         }
         if missing_proj:
+            diag["missing_projection_values"] = missing_proj
             f.write("missing_projection_values:\n")
             for market, count in sorted(missing_proj.items(), key=lambda kv: (-kv[1], kv[0])):
                 f.write(f"  {market}: {count}\n")
 
+    df.attrs["diagnostics"] = diag
     return df
