@@ -60,17 +60,27 @@ _DROP_COLS = [
 _MARKET_MAP = {
     "pass_yds": "player_pass_yds",
     "pass_tds": "player_pass_tds",
+    "pass_int": "player_pass_interceptions",
+    "pass_attempts": "player_pass_attempts",
+    "pass_att": "player_pass_attempts",
+    "pass_comp": "player_pass_completions",
+    "pass_completions": "player_pass_completions",
     "rush_yds": "player_rush_yds",
     "rush_tds": "player_rush_tds",
+    "rush_att": "player_rush_attempts",
+    "rush_attempts": "player_rush_attempts",
+    "rec": "player_receptions",
+    "receptions": "player_receptions",
     "rec_yds": "player_reception_yds",
     "rec_tds": "player_reception_tds",
-    # New alias: receptions (rec) maps to player_receptions
-    "rec": "player_receptions",
     # Alias for combined pass+rush yards.  Some projection files may
     # include a "pass_rush_yds" column; if so, map it to the player
     # prop identifier.  Even when this column is absent, we compute
     # the combination below.
     "pass_rush_yds": "player_pass_rush_yds",
+    # Projection providers sometimes include pass+rush+rec combos directly.
+    "pass_rush_rec_yds": "player_pass_rush_reception_yds",
+    "pass_rush_rec_tds": "player_pass_rush_reception_tds",
 }
 
 # Any *_sd columns (if present) should be numeric too
@@ -212,6 +222,30 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
         if sd_comps:
             df["player_pass_rush_reception_yds_sd"] = np.sqrt(df[sd_comps].pow(2).fillna(0).sum(axis=1))
 
+    # player_pass_rush_reception_tds: sum of pass, rush and reception TDs
+    if "player_pass_rush_reception_tds" not in df.columns:
+        comps_tds = [
+            c
+            for c in ["player_pass_tds", "player_rush_tds", "player_reception_tds"]
+            if c in df.columns
+        ]
+        if comps_tds:
+            df["player_pass_rush_reception_tds"] = df[comps_tds].fillna(0).sum(axis=1)
+    if "player_pass_rush_reception_tds_sd" not in df.columns:
+        sd_tds = [
+            c
+            for c in [
+                "player_pass_tds_sd",
+                "player_rush_tds_sd",
+                "player_reception_tds_sd",
+            ]
+            if c in df.columns
+        ]
+        if sd_tds:
+            df["player_pass_rush_reception_tds_sd"] = np.sqrt(
+                df[sd_tds].pow(2).fillna(0).sum(axis=1)
+            )
+
     # ------------------------------------------------------------------
     # Keep only useful columns (don’t accidentally drop player/team/pos/id/week)
     # ------------------------------------------------------------------
@@ -220,7 +254,11 @@ def clean_projections(df_in: pd.DataFrame) -> pd.DataFrame:
     # Determine which market columns are present after mapping and combo
     keep_markets = [c for c in _MARKET_MAP.values() if c in df.columns]
     # Also include any combo markets we've created
-    for combo_col in ["player_pass_rush_yds", "player_pass_rush_reception_yds"]:
+    for combo_col in [
+        "player_pass_rush_yds",
+        "player_pass_rush_reception_yds",
+        "player_pass_rush_reception_tds",
+    ]:
         if combo_col in df.columns:
             keep_markets.append(combo_col)
     keep_markets = list(dict.fromkeys(keep_markets))  # deduplicate

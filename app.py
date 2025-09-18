@@ -39,3 +39,40 @@ elif use_repo_latest:
 else:
     st.info("Upload your projections CSV to begin.")
     st.stop()
+
+st.subheader("Projection preview")
+st.dataframe(df.head(25))
+
+if not run_btn:
+    st.info("Adjust settings in the sidebar and click **Run scan** to query sportsbook odds.")
+    st.stop()
+
+if not api_key:
+    st.error("Provide an Odds API key to run the scan.")
+    st.stop()
+
+with st.spinner("Scanning for edges..."):
+    try:
+        edges = scan_edges(
+            df,
+            CFG,
+            api_key=api_key,
+            days_from=int(days),
+            profile=str(profile),
+            max_calls=int(max_calls),
+        )
+    except Exception as exc:  # Streamlit surfaces the stack trace when requested
+        st.error(f"Scan failed: {exc}")
+        st.stop()
+
+if edges is None or edges.empty:
+    st.warning("Scan completed but no qualifying edges were found.")
+else:
+    st.success(f"Found {len(edges)} edges. Showing top {min(len(edges), 50)}")
+    st.dataframe(edges.head(50))
+    st.download_button(
+        "Download edges as CSV",
+        data=edges.to_csv(index=False).encode("utf-8"),
+        file_name="edges.csv",
+        mime="text/csv",
+    )

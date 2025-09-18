@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import numpy as np
 import pandas as pd
 
 from agent_core import scan_edges
@@ -21,77 +20,6 @@ from alerts import alert_edges
 from config import load_config
 from cleaning import clean_projections
 from file_finder import resolve_projection_path  # NEW
-
-# Mapping of projection stat aliases to Odds API market keys.
-#
-# This map serves two purposes: it allows the CLI to accept projection
-# files with a variety of column names, and it defines the set of markets
-# for which combo columns may be computed.  When adding new markets to
-# your config, also add their aliases here.
-STAT_TO_MARKET = {
-    "pass_yds": "player_pass_yds",
-    "pass_tds": "player_pass_tds",
-    "pass_int": "player_pass_interceptions",
-    "pass_attempts": "player_pass_attempts",
-    "pass_att": "player_pass_attempts",
-    "pass_comp": "player_pass_completions",
-    "pass_completions": "player_pass_completions",
-    "rush_yds": "player_rush_yds",
-    "rush_tds": "player_rush_tds",
-    "rush_att": "player_rush_attempts",
-    "rush_attempts": "player_rush_attempts",
-    "rec": "player_receptions",
-    "receptions": "player_receptions",
-    "rec_yds": "player_reception_yds",
-    "rec_tds": "player_reception_tds",
-    "pass_rush_yds": "player_pass_rush_yds",
-    "pass_rush_rec_yds": "player_pass_rush_reception_yds",
-    "pass_rush_rec_tds": "player_pass_rush_reception_tds",
-}
-
-def _ensure_market_columns(df: pd.DataFrame) -> None:
-    """Backfill ``player_*`` market columns from common projection aliases.
-
-    This function modifies ``df`` in-place.  It normalizes all alias
-    columns defined in ``STAT_TO_MARKET``, creates corresponding ``player_*``
-    columns where necessary, and computes combined stat columns when
-    constituent columns exist.  A log message lists any markets that
-    were created via alias mapping.
-    """
-    created: list[str] = []
-    for alias, market in STAT_TO_MARKET.items():
-        if market not in df.columns and alias in df.columns:
-            df[market] = df[alias]
-            created.append(market)
-        sd_alias = f"{alias}_sd"
-        sd_market = f"{market}_sd"
-        if sd_market not in df.columns and sd_alias in df.columns:
-            df[sd_market] = df[sd_alias]
-
-    # Compute pass+rush+rec yards combo if not already present
-    if "player_pass_rush_reception_yds" not in df.columns:
-        comps = [c for c in ("pass_yds", "rush_yds", "rec_yds") if c in df.columns]
-        if len(comps) == 3:
-            df["player_pass_rush_reception_yds"] = df[comps].fillna(0).sum(axis=1)
-            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
-            if sd_cols:
-                df["player_pass_rush_reception_yds_sd"] = np.sqrt(
-                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
-                )
-
-    # Compute pass+rush yards combo if not already present
-    if "player_pass_rush_yds" not in df.columns:
-        comps = [c for c in ("pass_yds", "rush_yds") if c in df.columns]
-        if len(comps) == 2:
-            df["player_pass_rush_yds"] = df[comps].fillna(0).sum(axis=1)
-            sd_cols = [f"{c}_sd" for c in comps if f"{c}_sd" in df.columns]
-            if sd_cols:
-                df["player_pass_rush_yds_sd"] = np.sqrt(
-                    df[sd_cols].pow(2).fillna(0).sum(axis=1)
-                )
-
-    if created:
-        logging.info("Normalized projection columns for markets: %s", ", ".join(sorted(created)))
 
 def load_projections(path: str) -> pd.DataFrame:
     """Load projection CSV, clean it and normalize columns for markets."""
