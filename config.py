@@ -34,12 +34,34 @@ def load_config(path: str = "agent_config.yaml") -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
+    # Normalize market profiles.  Older configs listed markets as a flat list,
+    # while newer ones already namespace them by profile (e.g. {base: [...],
+    # heavy: [...]}).  ``scan_edges`` expects a mapping of profile → list, so
+    # detect the shape here instead of blindly wrapping the value in another
+    # ``{"base": ...}`` layer.
+    markets_cfg = raw.get("markets", [])
+    if isinstance(markets_cfg, dict):
+        markets_by_profile = {}
+        for profile, markets in markets_cfg.items():
+            if isinstance(markets, str):
+                values = [markets]
+            elif isinstance(markets, (list, tuple, set)):
+                values = list(markets)
+            elif markets is None:
+                values = []
+            else:
+                values = [markets]
+            markets_by_profile[str(profile)] = values
+    elif isinstance(markets_cfg, (list, tuple)):
+        markets_by_profile = {"base": list(markets_cfg)}
+    else:
+        markets_by_profile = {"base": []}
+
     # Adapt keys from YAML to the structure used throughout the codebase.
     return {
         "regions": raw.get("regions", "us"),
         "target_books": raw.get("target_books", []),
-        # Treat the top-level "markets" list as the default profile.
-        "markets": {"base": raw.get("markets", [])},
+        "markets": markets_by_profile,
         # YAML may use either outcome_sigma or sigma_defaults naming.
         "sigma_defaults": raw.get("outcome_sigma", raw.get("sigma_defaults", {})),
         "blend_alpha": raw.get("blend_alpha", 0.35),
