@@ -57,10 +57,10 @@ outcome_sigma:
     player_rush_yds: 4.6
     player_rush_tds: 0.07
   RB:
-    player_rush_yds: 4.5
-    player_rush_tds: 0.03
-    player_reception_yds: 1.8
-    player_reception_tds: 0.01
+    player_rush_yds: 15.0
+    player_rush_tds: 0.02
+    player_reception_yds: 7.0
+    player_reception_tds: 0.05
   TE:
     player_rush_yds: 0.02
     player_rush_tds: 0.001
