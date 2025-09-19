@@ -15,6 +15,9 @@ import os
 import sys
 import pandas as pd
 
+import logging
+logging.basicConfig(level=logging.INFO)
+
 from agent_core import scan_edges
 from alerts import alert_edges
 from config import load_config, validate_target_books
