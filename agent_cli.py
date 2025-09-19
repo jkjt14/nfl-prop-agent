@@ -290,12 +290,6 @@ def main() -> int:
         with open("artifacts/diagnostics.txt", "w", encoding="utf-8") as f:
             f.write("\n".join(diag_lines) + "\n")
 
-    if os.environ.get("LOG_MARKETS_ONCE", "1") == "1":
-    # …assemble `seen` dict …
-    logging.info("[DEBUG] markets_by_book: %s", seen)
-    print("[DEBUG] markets_by_book:", seen)
-    os.environ["LOG_MARKETS_ONCE"] = "0"
-
     adv = advice_lines(df_edges, threshold)
     with open("artifacts/advice.txt", "w", encoding="utf-8") as f:
         f.write(adv + "\n")
