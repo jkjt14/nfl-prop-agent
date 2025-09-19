@@ -17,14 +17,8 @@ odds_format: "american"
 # US), Fanatics Betting & Gaming, Penn Sports Interactive (ESPN Bet), Bally
 # Bet, DraftKings and FanDuel【997424387851567†L147-L167】. The keys here
 # correspond to the bookmaker identifiers used by The Odds API【150563287621877†L44-L69】.
-target_books:
-  - fanduel
-  - draftkings
-  - betmgm
-  - williamhill_us  # Caesars Sportsbook
-  - espnbet          # Penn Sports Interactive/ESPN Bet
-  - fanatics
-  - ballybet
+# agent_config.yaml
+target_books: []   # temporarily allow any book to see if props flow through
 
 # Markets to request from The Odds API.
 #
