@@ -246,8 +246,8 @@ def main() -> int:
                     pct,
                     missing,
                 )
-    import os
-    print("LOG_MARKETS_ONCE =", os.environ.get("LOG_MARKETS_ONCE"))
+    logging.info("LOG_MARKETS_ONCE = %s", os.environ.get("LOG_MARKETS_ONCE"))
+
 
     
     # Determine how far ahead to look for events.  Default to 2 days, but allow
