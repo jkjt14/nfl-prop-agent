@@ -46,7 +46,7 @@ jobs:
           LOG_MARKETS_ONCE: "1"     # <-- enables debug log for markets
         run: |
           mkdir -p artifacts
-          python agent_cli.py --projections "$PROJECTIONS_CSV" --profile "$PROFILE" | tee artifacts/agent_run.log
+          python -u agent_cli.py --projections "$PROJECTIONS_CSV" --profile "$PROFILE" 2>&1 | tee artifacts/agent_run.log
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
