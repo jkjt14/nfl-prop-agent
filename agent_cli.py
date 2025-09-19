@@ -246,7 +246,10 @@ def main() -> int:
                     pct,
                     missing,
                 )
+    import os
+    print("LOG_MARKETS_ONCE =", os.environ.get("LOG_MARKETS_ONCE"))
 
+    
     # Determine how far ahead to look for events.  Default to 2 days, but allow
     # override via the DAYS_FROM environment variable.  In practice, player
     # prop lines are often posted only a couple of days before kickoff, so
