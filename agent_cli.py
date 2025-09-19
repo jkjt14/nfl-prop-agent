@@ -22,6 +22,7 @@ from agent_core import scan_edges
 from alerts import alert_edges
 from config import load_config, validate_target_books
 from cleaning import clean_projections
+from diagnostics import format_scan_diagnostics, format_no_edge_summary
 from file_finder import resolve_projection_path  # NEW
 from market_utils import resolve_market_column
 
@@ -81,6 +82,8 @@ def format_projection_health(summary: list[dict]) -> list[str]:
     return lines
 
 
+codex/review-nfl-prop-agent-model-and-suggest-improvements-iaomkn
+
 def format_scan_diagnostics(diag: dict, reason_limit: int = 10) -> list[str]:
     """Return formatted diagnostic lines from a scan."""
     if not diag:
@@ -133,10 +136,18 @@ def format_scan_diagnostics(diag: dict, reason_limit: int = 10) -> list[str]:
     return lines
 
 
+ main
 def advice_lines(df: pd.DataFrame, threshold: float) -> str:
     """Format human-readable advice lines for Slack/console."""
-    if df is None or df.empty:
-        return "No edges found."
+    diag: dict = {}
+    if isinstance(df, pd.DataFrame):
+        diag = df.attrs.get("diagnostics", {}) or {}
+    if df is None or not isinstance(df, pd.DataFrame):
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="Diagnostics:")
+        return "No edges found." if not summary else "No edges found.\n" + summary
+    if df.empty:
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="Diagnostics:")
+        return "No edges found." if not summary else "No edges found.\n" + summary
     name_map = {
         "player_pass_yds": "passing yards",
         "player_pass_yards": "passing yards",
@@ -168,7 +179,8 @@ def advice_lines(df: pd.DataFrame, threshold: float) -> str:
     }
     keep = df[df["ev_per_unit"] >= threshold].copy()
     if keep.empty:
-        return "No edges ≥ threshold."
+        summary = format_no_edge_summary(diag, reason_limit=5, heading="Diagnostics:")
+        return "No edges ≥ threshold." if not summary else "No edges ≥ threshold.\n" + summary
     lines = []
     for _, r in keep.head(50).iterrows():
         evp = f"{r['ev_per_unit']*100:.1f}%"
